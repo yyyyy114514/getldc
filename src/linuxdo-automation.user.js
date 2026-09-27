@@ -106,6 +106,8 @@
   let enableLike = true;
   // 只给主帖（楼主帖）点赞，不给回复楼层点赞
   let likeMainOnly = false;
+  // 半透明信息浮窗：开启后面板不再显示统计信息，改为页面左上角半透明浮窗显示
+  let floatingStats = false;
 
   // 点赞概率预设
   const LIKE_CHANCE_PRESETS = {
@@ -429,6 +431,7 @@
   topicTarget = Storage.get('topic_target', 20);
   likeTarget = Storage.get('like_target', 10);
   maxMinutes = Storage.get('max_minutes', 0);
+  floatingStats = Storage.get('floating_stats', false);
   scheduleEnabled = Storage.get('sched_enabled', false);
   scheduleTime = Storage.get('sched_time', '09:00');
   CONFIG.debug = Storage.get('debug', false);
@@ -1564,6 +1567,28 @@
 
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .auto-viewed { opacity: 0.6; }
+
+        /* 半透明信息浮窗：面板统计区的镜像，显示在页面左上角（不挡页面操作） */
+        #linuxdo-stats-float {
+          position: fixed; top: 10px; left: 10px; z-index: 2147483647;
+          display: flex; flex-direction: column; gap: 4px;
+          padding: 10px 14px; min-width: 170px;
+          background: rgba(16, 12, 34, 0.55);
+          border: 1px solid rgba(255,255,255,0.18);
+          border-radius: 12px;
+          box-shadow: 0 4px 18px rgba(0,0,0,0.25);
+          backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+          font-size: 12px; line-height: 1.6; color: #fff;
+          pointer-events: none; user-select: none; -webkit-user-select: none;
+        }
+        #linuxdo-stats-float.hidden { display: none; }
+        #linuxdo-stats-float .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 0; white-space: nowrap; }
+        #linuxdo-stats-float .stats-label { color: rgba(255,255,255,0.6); margin-right: 14px; }
+        #linuxdo-stats-float .stats-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+        #linuxdo-stats-float .status-indicator { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+        #linuxdo-stats-float .status-indicator.running { background: #22c55e; animation: float-pulse 1.5s infinite; }
+        #linuxdo-stats-float .status-indicator.stopped { background: #f87171; }
+        @keyframes float-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
       `;
       document.head.appendChild(style);
 
@@ -1636,6 +1661,11 @@
               <span class="goal-unit">时长上限(分)</span>
             </div>
             <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览与点赞都达标才自动停止（0 为不限），超时也会自动停</div>
+            <div class="row"><span class="row-label">浮窗</span>
+              <label class="floor-check" title="开启后面板不再显示统计信息，改为页面左上角半透明浮窗显示；再次点击关闭恢复面板内显示">
+                <input type="checkbox" id="floating-stats">半透明信息浮窗
+              </label>
+            </div>
           </div>
           <button class="action-btn btn-advanced" id="btn-advanced">⚙ 高级设置</button>
           <div class="adv-box hidden" id="adv-box">
@@ -1793,6 +1823,34 @@
           log('高级设置已更新，下一轮浏览生效');
         });
       });
+
+      // 半透明信息浮窗：面板统计区的镜像。开启时隐藏面板统计区、浮窗显示；
+      // 统计内容用 MutationObserver 实时同步，任何函数改面板统计都会被镜像到浮窗
+      const statsBlock = panel.querySelector('.stats');
+      const floatBox = document.createElement('div');
+      floatBox.id = 'linuxdo-stats-float';
+      floatBox.classList.add('hidden');
+      document.body.appendChild(floatBox);
+      const syncFloat = () => { if (statsBlock) floatBox.innerHTML = statsBlock.innerHTML; };
+      syncFloat();
+      if (statsBlock) {
+        new MutationObserver(syncFloat).observe(statsBlock, {
+          childList: true, subtree: true, characterData: true, attributes: true
+        });
+      }
+      const floatingStatsCheck = document.getElementById('floating-stats');
+      floatingStatsCheck.checked = floatingStats;
+      floatingStatsCheck.addEventListener('change', (e) => {
+        floatingStats = e.target.checked;
+        Storage.set('floating_stats', floatingStats);
+        statsBlock.style.display = floatingStats ? 'none' : '';
+        floatBox.classList.toggle('hidden', !floatingStats);
+        log(floatingStats ? '已开启半透明信息浮窗（左上角）' : '已关闭浮窗，恢复面板内显示统计信息');
+      });
+      if (floatingStats) {
+        statsBlock.style.display = 'none';
+        floatBox.classList.remove('hidden');
+      }
 
       document.getElementById('page-type').textContent = getPageType();
     }
