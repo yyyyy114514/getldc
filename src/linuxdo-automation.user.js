@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.4
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持每日定时自动开始与浏览/点赞目标；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
+// @version      2.6.5
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -92,10 +92,66 @@
   // 列表轮换顺序：未读内容最先（最可能含新帖），三个列表都扫完即本轮结束
   const LIST_ORDER = ['unread', 'new', 'latest'];
 
-  // 从当前路径反推实际所在的列表（currentList 只是面板选中值，换列表跳转后 URL 才是真相），
-  // 供「扫完换列表」轮换去重，避免跳回当前所在列表造成原地打转
+  // ==================== 分区（板块） ====================
+  // 与 dosss (linuxdosss/bot_core.py CATEGORIES) 保持一致：名称 / 路径 / 默认启用
+  const CATEGORY_LIST = [
+    { name: '开发调优', url: '/c/develop/4', enabled: true },
+    { name: '国产替代', url: '/c/domestic/98', enabled: true },
+    { name: '资源荟萃', url: '/c/resource/14', enabled: true },
+    { name: '网盘资源', url: '/c/resource/cloud-asset/94', enabled: true },
+    { name: '文档共建', url: '/c/wiki/42', enabled: true },
+    { name: '非我莫属', url: '/c/job/27', enabled: true },
+    { name: '读书成诗', url: '/c/reading/32', enabled: true },
+    { name: '前沿快讯', url: '/c/news/34', enabled: true },
+    { name: '网络记忆', url: '/c/feeds/92', enabled: true },
+    { name: '福利羊毛', url: '/c/welfare/36', enabled: true },
+    { name: '搞七捻三', url: '/c/gossip/11', enabled: true },
+    { name: '虫洞广场', url: '/c/square/110', enabled: true },
+    { name: '积分乐园', url: '/c/credit/106', enabled: false },
+    { name: '扬帆起航', url: '/c/startup/46', enabled: false },
+    { name: '社区孵化', url: '/c/incubator/102', enabled: false },
+    { name: '运营反馈', url: '/c/feedback/2', enabled: false }
+  ];
+  // 分区选择：'all' = 不限分区（浏览全站未读/新帖/最新）；
+  // 数组 = 只浏览这些分区（默认与 dosss 一致：CATEGORY_LIST 中 enabled 的 12 个）
+  const DEFAULT_SELECTED_CATEGORIES = CATEGORY_LIST.filter(c => c.enabled).map(c => c.url);
+  let selectedCategories = Storage.get('selected_categories', null);
+  if (selectedCategories === null) selectedCategories = DEFAULT_SELECTED_CATEGORIES.slice();
+  else if (selectedCategories !== 'all') {
+    // 容错：剔除已不存在的分区路径，防止过期配置让轮换目标悬空
+    selectedCategories = (Array.isArray(selectedCategories) ? selectedCategories : []).filter(u =>
+      CATEGORY_LIST.some(c => c.url === u));
+  }
+
+  function isCategoryMode() {
+    return Array.isArray(selectedCategories) && selectedCategories.length > 0;
+  }
+
+  // 当前浏览目标列表（分区模式下是所选分区页，否则是全站三个列表）
+  function getBrowseTargets() {
+    if (isCategoryMode()) {
+      return selectedCategories.map(url => {
+        const cat = CATEGORY_LIST.find(c => c.url === url);
+        return { key: url, name: cat ? cat.name : url, path: url };
+      });
+    }
+    return LIST_ORDER.map(key => ({ key, name: LIST_OPTIONS[key].name, path: LIST_OPTIONS[key].path }));
+  }
+
+  // 默认跳转目标（兜底/首趟）：分区模式跳到第一个所选分区，否则维持面板当前列表选择
+  function getDefaultBrowsePath() {
+    const targets = getBrowseTargets();
+    return (targets[0] && targets[0].path) || LIST_OPTIONS[currentList]?.path || '/latest';
+  }
+
+  // 从当前路径反推实际所在的浏览目标 key（currentList 只是面板选中值，换列表跳转后 URL 才是真相），
+  // 供「扫完换目标」轮换去重，避免跳回当前所在列表造成原地打转
   function getCurrentListFromPath() {
     const p = window.location.pathname;
+    if (isCategoryMode()) {
+      const target = getBrowseTargets().find(t => t.path === p);
+      return target ? target.key : 'latest';
+    }
     for (const key of LIST_ORDER) {
       if (LIST_OPTIONS[key].path === p) return key;
     }
@@ -1066,7 +1122,8 @@
     async returnToList() {
       log('准备返回话题列表...');
       await randomDelay(CONFIG.returnToListDelay, CONFIG.returnToListDelay * 1.5);
-      const returnUrl = LIST_OPTIONS[currentList]?.path || '/latest';
+      // 回到进入话题前的浏览目标（分区页或全站列表）：列表浏览器跳转前已把来源路径存进 Storage
+      const returnUrl = Storage.get('session_return_path', '') || getDefaultBrowsePath();
       window.location.href = returnUrl;
     }
   }
@@ -1162,6 +1219,8 @@
         await randomDelay(300, 600);
 
         log(`进入话题: ${topicId}`);
+        // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
+        Storage.set('session_return_path', window.location.pathname);
         // 直接改 location 强制当前页跳转（不点击链接，因此无需理会其 target 属性）
         window.location.href = titleLink.href;
         return true;
@@ -1185,23 +1244,23 @@
       }
     }
 
-    // 当前列表扫完且无新内容：换下一个列表继续找（未读→新帖→最新），全部扫过即本轮结束
-    // （旧实现永远跳回当前列表，导致 /latest 上无限重载打转，从未真正换列表）
+    // 当前浏览目标扫完且无新内容：换下一个目标（未读→新帖→最新，或已选分区间轮换），全部扫过即本轮结束
     async switchToAnotherList() {
-      const next = LIST_ORDER.find(key => !this.scannedLists.has(key));
+      const targets = getBrowseTargets();
+      const next = targets.find(t => !this.scannedLists.has(t.key));
       if (!next) {
-        log('所有列表已浏览完，本轮结束');
+        log('所有浏览目标已浏览完，本轮结束');
         this.stop();
         this.onFinished?.('列表已尽');
         return;
       }
-      this.scannedLists.add(next);
+      this.scannedLists.add(next.key);
       // 跳转前落盘：目的页脚本重新注入后靠 epoch 恢复集合，继续轮换
       Storage.set('session_scanned_lists', [...this.scannedLists]);
       Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
-      log(`切换到列表: ${LIST_OPTIONS[next].name}`);
+      log(`切换到列表: ${next.name}`);
       await randomDelay(1000, 2000);
-      window.location.href = LIST_OPTIONS[next].path;
+      window.location.href = next.path;
     }
   }
 
@@ -1264,7 +1323,7 @@
         this.listBrowser = new TopicListBrowser(this.history, onUpdate, (reason) => this.finishRun(reason));
         await this.listBrowser.start();
       } else {
-        window.location.href = LIST_OPTIONS[currentList]?.path || '/latest';
+        window.location.href = getDefaultBrowsePath();
       }
     }
 
@@ -1277,7 +1336,7 @@
         await this.runBrowserFor(getPageType());
       } catch (error) {
         await randomDelay(3000, 5000);
-        window.location.href = LIST_OPTIONS[currentList]?.path || '/latest';
+        window.location.href = getDefaultBrowsePath();
       }
     }
 
@@ -1617,6 +1676,52 @@
         #linuxdo-stats-float .status-indicator.running { background: #22c55e; animation: float-pulse 1.5s infinite; }
         #linuxdo-stats-float .status-indicator.stopped { background: #f87171; }
         @keyframes float-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* 分区行 */
+        #linuxdo-auto-panel .cat-btn { flex: none; width: auto; padding: 5px 12px; }
+        #linuxdo-auto-panel .cat-summary { flex: 1; min-width: 0; font-size: 11px; color: rgba(255,255,255,0.72); margin-left: 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* 分区选择弹窗（独立覆盖层，不在面板内） */
+        #linuxdo-cat-overlay {
+          position: fixed; inset: 0; z-index: 2147483646;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(8, 6, 20, 0.55);
+        }
+        #linuxdo-cat-overlay.hidden { display: none; }
+        #linuxdo-cat-modal {
+          width: min(560px, calc(100vw - 40px)); max-height: 80vh;
+          display: flex; flex-direction: column;
+          padding: 16px 18px; border-radius: 14px;
+          background: #fff; color: #1f2937;
+          box-shadow: 0 12px 40px rgba(0,0,0,0.35);
+          font-size: 13px; line-height: 1.5;
+          user-select: text; -webkit-user-select: text;
+        }
+        #linuxdo-cat-modal .cat-modal-title { font-size: 15px; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+        #linuxdo-cat-modal .cat-close { cursor: pointer; border: 0; background: none; font-size: 16px; color: #9ca3af; line-height: 1; padding: 2px 4px; }
+        #linuxdo-cat-modal .cat-close:hover { color: #374151; }
+        #linuxdo-cat-modal .cat-modal-hint { margin-top: 6px; font-size: 12px; color: #6b7280; }
+        #linuxdo-cat-modal .cat-all { display: flex; align-items: center; gap: 6px; margin-top: 12px; padding: 8px 10px; border-radius: 8px; background: #f3f4f6; font-weight: 600; cursor: pointer; }
+        #linuxdo-cat-modal .cat-all input { width: 15px; height: 15px; accent-color: #5b3bc4; cursor: pointer; }
+        #linuxdo-cat-modal .cat-grid {
+          margin-top: 10px; overflow-y: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px;
+          padding-right: 6px; max-height: 42vh;
+        }
+        #linuxdo-cat-modal .cat-grid::-webkit-scrollbar { width: 6px; }
+        #linuxdo-cat-modal .cat-grid::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
+        #linuxdo-cat-modal .cat-item { display: flex; align-items: center; gap: 7px; padding: 5px 6px; border-radius: 6px; cursor: pointer; font-size: 12px; }
+        #linuxdo-cat-modal .cat-item:hover { background: #f3f4f6; }
+        #linuxdo-cat-modal .cat-item input { width: 14px; height: 14px; accent-color: #5b3bc4; cursor: pointer; }
+        #linuxdo-cat-modal .cat-item.disabled { opacity: 0.5; pointer-events: none; }
+        #linuxdo-cat-modal .cat-item .cat-count { margin-left: auto; font-size: 10px; color: #9ca3af; }
+        #linuxdo-cat-modal .cat-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+        #linuxdo-cat-modal .cat-modal-actions button {
+          padding: 7px 18px; border: 0; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: inherit;
+        }
+        #linuxdo-cat-modal .btn-cat-save { background: #5b3bc4; color: #fff; }
+        #linuxdo-cat-modal .btn-cat-save:hover { filter: brightness(1.1); }
+        #linuxdo-cat-modal .btn-cat-cancel { background: #f3f4f6; color: #374151; }
+        #linuxdo-cat-modal .btn-cat-cancel:hover { background: #e5e7eb; }
       `;
       document.head.appendChild(style);
 
@@ -1648,6 +1753,11 @@
               <button class="speed-btn list-btn ${currentList==='new'?'active':''}" data-list="new">新帖</button>
               <button class="speed-btn list-btn ${currentList==='unread'?'active':''}" data-list="unread">未读</button>
             </div></div>
+            <div class="row"><span class="row-label">分区</span>
+              <button class="speed-btn cat-btn" id="btn-cat-picker" title="弹窗选择只浏览哪些分区，内容较多故不在面板里显示">选分区…</button>
+              <span class="cat-summary" id="cat-summary"></span>
+            </div>
+            <div class="row-hint">勾选分区后只轮换浏览所选分区；不限分区 = 按上方列表（未读/新帖/最新）全站轮换</div>
             <div class="row"><span class="row-label">点赞</span><div class="seg">
               <button class="speed-btn like-btn ${enableLike?'active':''}" data-like="true">开启</button>
               <button class="speed-btn like-btn ${!enableLike?'active':''}" data-like="false">关闭</button>
@@ -1718,6 +1828,8 @@
             <div class="stats-row"><span class="stats-label">本次点赞</span><span class="stats-value" id="session-liked">0</span></div>
             <div class="stats-row"><span class="stats-label">本次阅读楼层</span><span class="stats-value" id="session-read-count">0</span></div>
             <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
+            <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
+            <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
             <div class="stats-row"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
           </div>
         </div>
@@ -1942,6 +2054,139 @@
       });
 
       document.getElementById('page-type').textContent = getPageType();
+
+      // ==================== 浮窗走秒时钟 ====================
+      // 限时剩余：>1h 显示 hh:mm:ss，否则 mm:ss；未设置时长显示“不限”
+      const formatRemain = (ms) => {
+        const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+        const h = Math.floor(totalSeconds / 3600);
+        const m = Math.floor((totalSeconds % 3600) / 60);
+        const s = totalSeconds % 60;
+        const pad = (n) => String(n).padStart(2, '0');
+        return h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+      };
+      const tickClock = () => {
+        const remainEl = document.getElementById('countdown-remain');
+        const clockEl = document.getElementById('float-clock');
+        if (remainEl) {
+          if (maxMinutes <= 0) {
+            remainEl.textContent = '不限';
+          } else if (this.isEnabled && this.startTime) {
+            const remainMs = maxMinutes * 60000 - (Date.now() - this.startTime);
+            remainEl.textContent = formatRemain(remainMs);
+          } else {
+            remainEl.textContent = formatRemain(maxMinutes * 60000);
+          }
+        }
+        if (clockEl) {
+          const now = new Date();
+          const pad = (n) => String(n).padStart(2, '0');
+          clockEl.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+        }
+      };
+      tickClock();
+      // 每秒刷新：面板统计区虽然 display:none，MutationObserver 仍会把变化镜像到浮窗
+      setInterval(tickClock, 1000);
+
+      // ==================== 分区选择弹窗 ====================
+      const catSummaryEl = document.getElementById('cat-summary');
+      const renderCatSummary = () => {
+        if (!catSummaryEl) return;
+        catSummaryEl.textContent = isCategoryMode()
+          ? `已选 ${selectedCategories.length} 个分区`
+          : selectedCategories === 'all' ? '不限分区' : '默认分区';
+      };
+      renderCatSummary();
+      document.getElementById('btn-cat-picker').addEventListener('click', () => this.openCategoryPicker(renderCatSummary));
+    }
+
+    // 分区选择弹窗：独立覆盖层窗口（不在面板内），列出全部板块供勾选，
+    // 顶部「不限分区」= 全站轮换。保存结果写入 Storage('selected_categories'):
+    // 'all' 或所选分区 url 数组，应用后通过 onChanged 刷新面板摘要
+    openCategoryPicker(onChanged) {
+      let overlay = document.getElementById('linuxdo-cat-overlay');
+      const close = () => overlay.classList.add('hidden');
+      const rebuild = () => {
+        const allCheck = overlay.querySelector('.cat-all input');
+        const items = [...overlay.querySelectorAll('.cat-item')];
+        if (selectedCategories === 'all') {
+          allCheck.checked = true;
+          items.forEach(item => {
+            item.classList.add('disabled');
+            item.querySelector('input').checked = false;
+          });
+        } else {
+          allCheck.checked = false;
+          items.forEach(item => {
+            item.classList.remove('disabled');
+            const box = item.querySelector('input');
+            box.checked = selectedCategories.includes(box.getAttribute('data-url'));
+          });
+        }
+      };
+
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'linuxdo-cat-overlay';
+        overlay.classList.add('hidden');
+        overlay.innerHTML = `
+          <div class="cat-modal" id="linuxdo-cat-modal">
+            <div class="cat-modal-title">选择浏览分区
+              <button class="cat-close" id="cat-close" title="关闭">✕</button>
+            </div>
+            <div class="cat-modal-hint">勾选后只轮换浏览所选分区；不勾选任何分区则必须打开「不限分区」（= 按未读/新帖/最新全站轮换）。默认与 dosss 一致：前 12 个常用分区。</div>
+            <label class="cat-all"><input type="checkbox" id="cat-all"> 不限分区（全站轮换）</label>
+            <div class="cat-grid">
+              ${CATEGORY_LIST.map(c => `
+                <label class="cat-item"><input type="checkbox" data-url="${c.url}">
+                  <span>${c.name}</span>
+                </label>`).join('')}
+            </div>
+            <div class="cat-modal-actions">
+              <button class="btn-cat-cancel" id="cat-cancel">取消</button>
+              <button class="btn-cat-save" id="cat-save">保存</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+
+        overlay.querySelector('.cat-all input').addEventListener('change', (e) => {
+          const items = [...overlay.querySelectorAll('.cat-item')];
+          items.forEach(item => {
+            item.classList.toggle('disabled', e.target.checked);
+            if (e.target.checked) item.querySelector('input').checked = false;
+          });
+        });
+        overlay.querySelector('#cat-close').addEventListener('click', close);
+        overlay.querySelector('#cat-cancel').addEventListener('click', close);
+        overlay.addEventListener('click', (e) => {
+          if (e.target === overlay) close();
+        });
+        overlay.querySelector('#cat-save').addEventListener('click', () => {
+          const allCheck = overlay.querySelector('.cat-all input');
+          if (allCheck.checked) {
+            selectedCategories = 'all';
+            Storage.set('selected_categories', 'all');
+          } else {
+            const chosen = [...overlay.querySelectorAll('.cat-item input')]
+              .filter(box => box.checked)
+              .map(box => box.getAttribute('data-url'));
+            if (chosen.length === 0) {
+              alert('请至少勾选一个分区，或勾选「不限分区」');
+              return;
+            }
+            selectedCategories = chosen;
+            Storage.set('selected_categories', chosen);
+          }
+          Storage.set('session_scanned_lists', []); // 分区选择变更后重新按新集合轮换
+          onChanged?.();
+          log(selectedCategories === 'all'
+            ? '浏览范围：不限分区（全站轮换）'
+            : `浏览范围：${selectedCategories.length} 个分区`);
+          close();
+        });
+      }
+      rebuild();
+      overlay.classList.remove('hidden');
     }
 
     // 拖动：手柄是标题栏（收起态下它就是整个悬浮球），松手后记住位置
@@ -2127,6 +2372,17 @@
     }
 
     async start(isManual = false, resetSessionFlag = false) {
+      // 全部目标都为 0（浏览/点赞/时长全不限）= 无法判定的无限目标：禁止开始，强制至少设一个目标
+      if (topicTarget <= 0 && likeTarget <= 0 && maxMinutes <= 0) {
+        const msg = '请至少设置一个目标（浏览帖数/点赞数/时长上限任选其一），全部为 0 时无法开始本轮浏览';
+        if (isManual) {
+          alert(`⚠️ ${msg}`);
+        } else {
+          log(`跳过自动开始：${msg}`);
+        }
+        return;
+      }
+
       // 手动开始或定时触发都视为新一轮会话：清零浏览/点赞/回复的会话计数与阅读量
       // （自动恢复运行时不清零，保证刷新/跳转后延续）
       if (isManual || resetSessionFlag) {
@@ -2245,8 +2501,9 @@
       if (!el) return;
       const remain = topicTarget > 0 ? topicTarget : '不限';
       const likes = likeTarget > 0 ? likeTarget : '不限';
+      const minutes = maxMinutes > 0 ? `${maxMinutes} 分` : '不限';
       el.textContent = scheduleEnabled
-        ? `${scheduleTime} 自动开始 · 目标 ${remain} 帖 / ${likes} 赞`
+        ? `${scheduleTime} 自动开始 · 目标 ${remain} 帖 / ${likes} 赞 / ${minutes}`
         : '每日定时关闭';
     }
 
