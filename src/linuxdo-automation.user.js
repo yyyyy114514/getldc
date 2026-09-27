@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.4.2
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数
+// @version      2.5.0
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持每日定时自动开始与浏览/点赞目标
 // @author       Assistant
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/liasica/linuxdo/feature/src/linuxdo-automation.user.js
@@ -88,6 +88,19 @@
   };
   let currentList = 'latest';
 
+  // 列表轮换顺序：未读内容最先（最可能含新帖），三个列表都扫完即本轮结束
+  const LIST_ORDER = ['unread', 'new', 'latest'];
+
+  // 从当前路径反推实际所在的列表（currentList 只是面板选中值，换列表跳转后 URL 才是真相），
+  // 供「扫完换列表」轮换去重，避免跳回当前所在列表造成原地打转
+  function getCurrentListFromPath() {
+    const p = window.location.pathname;
+    for (const key of LIST_ORDER) {
+      if (LIST_OPTIONS[key].path === p) return key;
+    }
+    return 'latest';
+  }
+
   // 点赞开关
   let enableLike = true;
 
@@ -105,6 +118,14 @@
   // 楼层限制的计数口径：开启后已读楼层滚过不计数，只数上次阅读位置之后的新楼层
   let floorLimitUnreadOnly = false;
 
+  // 每日定时自动开始：到设定时刻自动启动浏览（同一天只触发一次，错过时间启动后不补跑）
+  let scheduleEnabled = false;
+  let scheduleTime = '09:00'; // 'HH:MM'
+
+  // 会话目标：本次浏览满 N 帖或点满 M 赞即自动停止；0 表示该项不限
+  let topicTarget = 20;
+  let likeTarget = 10;
+
   const CONFIG = {
     // 动态从速度预设获取
     get scrollStep() { return SPEED_PRESETS[currentSpeed].scrollStep; },
@@ -118,9 +139,9 @@
     get likeChance() { return LIKE_CHANCE_PRESETS[currentLikeChance].value; },
     minLikeInterval: 2000,        // 最小点赞间隔 (ms)
 
-    // 会话设置
-    maxLikesPerSession: 50,       // 每次会话最大点赞数
-    maxTopicsPerSession: 50,      // 每次会话最大浏览话题数
+    // 会话设置（动态从目标配置读取，达到即自动停止）
+    get maxLikesPerSession() { return likeTarget; },
+    get maxTopicsPerSession() { return topicTarget; },
 
     // 返回列表设置
     returnToListDelay: 1000,      // 返回列表前延迟 (ms)
@@ -194,6 +215,31 @@
     floorLimitUnreadOnly = enabled;
     Storage.set('floor_limit_unread_only', enabled);
     log(`楼层限制口径: ${enabled ? '只计未读楼层' : '按楼层号'}`);
+  }
+
+  // 每日定时设置：时间格式 HH:MM，非法输入回落 09:00
+  function setSchedule(enabled, time) {
+    scheduleEnabled = !!enabled;
+    let t = '09:00';
+    const m = String(time || '').match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+      const h = Math.min(23, Math.max(0, parseInt(m[1], 10)));
+      const mm = Math.min(59, Math.max(0, parseInt(m[2], 10)));
+      t = `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`;
+    }
+    scheduleTime = t;
+    Storage.set('sched_enabled', scheduleEnabled);
+    Storage.set('sched_time', scheduleTime);
+    log(`每日定时: ${scheduleEnabled ? `每天 ${scheduleTime} 自动开始浏览` : '已关闭'}`);
+  }
+
+  // 会话目标设置：浏览满 N 帖或点满 M 赞自动停止，0 表示不限
+  function setTargets(topics, likes) {
+    topicTarget = Math.max(0, Math.floor(Number(topics) || 0));
+    likeTarget = Math.max(0, Math.floor(Number(likes) || 0));
+    Storage.set('topic_target', topicTarget);
+    Storage.set('like_target', likeTarget);
+    log(`会话目标: 浏览 ${topicTarget || '不限'} 帖 / 点赞 ${likeTarget || '不限'} 个`);
   }
 
   // ==================== 工具函数 ====================
@@ -330,6 +376,10 @@
   currentLikeChance = Storage.get('like_chance', 'medium');
   floorLimit = Storage.get('floor_limit', 0);
   floorLimitUnreadOnly = Storage.get('floor_limit_unread_only', false);
+  topicTarget = Storage.get('topic_target', 20);
+  likeTarget = Storage.get('like_target', 10);
+  scheduleEnabled = Storage.get('sched_enabled', false);
+  scheduleTime = Storage.get('sched_time', '09:00');
   CONFIG.debug = Storage.get('debug', false);
 
   // 数据迁移：v2.1.1 起 liked_posts 的键从话题内楼层序号改为全局 post id，
@@ -358,9 +408,13 @@
     constructor() {
       this.viewed = new Set(Storage.get('viewed_topics', []));
       this.liked = new Set(Storage.get('liked_posts', []));
-      this.sessionViewed = 0;
-      this.sessionLiked = 0;
-      this.sessionReplies = 0;
+      // 会话计数持久化（按 epoch 区分「新一轮」）：整页跳转会重载脚本，若只存内存，
+      // 每次翻页都会清零，导致「浏览满 N 帖自动停止」的目标永远达不到。
+      // epoch 只在手动/定时开始时更新，翻页不清——与阅读量的处理方式一致
+      this.sessionEpoch = Storage.get('session_epoch', 0);
+      this.sessionViewed = Storage.get('session_viewed', 0);
+      this.sessionLiked = Storage.get('session_liked', 0);
+      this.sessionReplies = Storage.get('session_replies', 0);
       this.totalReplies = Storage.get('total_replies', 0);
       // 节流写入的定时器句柄，避免每标记一条就全量序列化落盘
       this.saveTimer = null;
@@ -376,6 +430,7 @@
         this.viewed.add(id);
         trimSet(this.viewed, MAX_HISTORY);
         this.sessionViewed++;
+        Storage.set('session_viewed', this.sessionViewed);
         this.scheduleSave();
         log(`标记话题 ${id} 为已浏览，本次会话已浏览 ${this.sessionViewed} 个`);
       }
@@ -391,16 +446,31 @@
         this.liked.add(id);
         trimSet(this.liked, MAX_HISTORY);
         this.sessionLiked++;
+        Storage.set('session_liked', this.sessionLiked);
         this.scheduleSave();
       }
     }
 
     addReplyViewed() {
       this.sessionReplies++;
+      Storage.set('session_replies', this.sessionReplies);
       this.totalReplies++;
       if (this.sessionReplies % 10 === 0) {
         this.scheduleSave();
       }
+    }
+
+    // 新一轮开始：清零会话计数并记录新 epoch（翻页不清零，只在这里重置）
+    resetSession() {
+      this.sessionEpoch = Date.now();
+      this.sessionViewed = 0;
+      this.sessionLiked = 0;
+      this.sessionReplies = 0;
+      Storage.set('session_epoch', this.sessionEpoch);
+      Storage.set('session_viewed', 0);
+      Storage.set('session_liked', 0);
+      Storage.set('session_replies', 0);
+      log('新一轮会话开始（计数已清零）');
     }
 
     // 节流写入：合并短时间内的多次变更，最多延迟 2 秒统一落盘
@@ -449,8 +519,12 @@
     }
 
     canContinue() {
-      return this.sessionViewed < CONFIG.maxTopicsPerSession &&
-             this.sessionLiked < CONFIG.maxLikesPerSession;
+      const maxTopics = CONFIG.maxTopicsPerSession;
+      const maxLikes = CONFIG.maxLikesPerSession;
+      // 目标为 0 表示该项不限（只靠另一项或「扫完列表」收尾）
+      if (maxTopics > 0 && this.sessionViewed >= maxTopics) return false;
+      if (maxLikes > 0 && this.sessionLiked >= maxLikes) return false;
+      return true;
     }
   }
 
@@ -497,6 +571,8 @@
           }
         }
         if (added > 0) {
+          // 阅读量去重键会随会话持续增长，设上限防长期运行无限膨胀（超限淘汰最旧）
+          trimSet(this.readKeys, 20000);
           Storage.set('session_read_keys', [...this.readKeys]);
           log(`阅读上报成功，新增 ${added} 条，本次总阅读量 ${this.count}`);
         }
@@ -905,12 +981,24 @@
   // ==================== 话题列表浏览器 ====================
 
   class TopicListBrowser {
-    constructor(history, onStatsUpdate) {
+    constructor(history, onStatsUpdate, onFinished) {
       this.history = history;
       this.onStatsUpdate = onStatsUpdate;
+      // 会话目标达成 / 所有列表扫完时回调，让主控彻底结束本轮（不能只 stop 列表浏览器，
+      // 否则自动化仍处于「运行中」，卡死检测会在 30 秒后反复重启空转）
+      this.onFinished = onFinished;
       this.scrollController = new ScrollController();
       this.isRunning = false;
       this.scannedTopics = new Set();
+      // 已扫过的列表集合：从实际路径推导（当前页）并叠加本会话早前扫过的列表。
+      // 集合跨整页跳转持久化（键带会话 epoch），否则每跳转一次就丢，轮换会退化成
+      // latest↔unread 交替空转，永远扫不到中间的 new
+      const currentListKey = getCurrentListFromPath();
+      const savedEpoch = Storage.get('session_scanned_lists_epoch', 0);
+      this.scannedLists = new Set(
+        savedEpoch === this.history.sessionEpoch ? Storage.get('session_scanned_lists', []) : []
+      );
+      this.scannedLists.add(currentListKey);
     }
 
     async start() {
@@ -971,8 +1059,9 @@
         }
 
         if (!this.history.canContinue()) {
-          log('达到会话限制，停止');
+          log('达到会话目标，本轮结束');
           this.stop();
+          this.onFinished?.('达到目标');
           return false;
         }
 
@@ -1003,10 +1092,23 @@
       }
     }
 
+    // 当前列表扫完且无新内容：换下一个列表继续找（未读→新帖→最新），全部扫过即本轮结束
+    // （旧实现永远跳回当前列表，导致 /latest 上无限重载打转，从未真正换列表）
     async switchToAnotherList() {
-      const targetList = LIST_OPTIONS[currentList]?.path || '/latest';
+      const next = LIST_ORDER.find(key => !this.scannedLists.has(key));
+      if (!next) {
+        log('所有列表已浏览完，本轮结束');
+        this.stop();
+        this.onFinished?.('列表已尽');
+        return;
+      }
+      this.scannedLists.add(next);
+      // 跳转前落盘：目的页脚本重新注入后靠 epoch 恢复集合，继续轮换
+      Storage.set('session_scanned_lists', [...this.scannedLists]);
+      Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
+      log(`切换到列表: ${LIST_OPTIONS[next].name}`);
       await randomDelay(1000, 2000);
-      window.location.href = targetList;
+      window.location.href = LIST_OPTIONS[next].path;
     }
   }
 
@@ -1024,6 +1126,7 @@
       this.stuckTimeout = 30000;
       this.lastUrl = window.location.href;
       this.urlCheckInterval = null;
+      this.schedTimer = null;
     }
 
     // 附带防多开心跳记录
@@ -1056,7 +1159,7 @@
         this.topicBrowser = new TopicBrowser(this.history, onUpdate);
         await this.topicBrowser.start();
       } else if (pageType === 'list') {
-        this.listBrowser = new TopicListBrowser(this.history, onUpdate);
+        this.listBrowser = new TopicListBrowser(this.history, onUpdate, (reason) => this.finishRun(reason));
         await this.listBrowser.start();
       } else {
         window.location.href = LIST_OPTIONS[currentList]?.path || '/latest';
@@ -1169,8 +1272,14 @@
 
       this.createControlPanel();
       readingTracker.onUpdate = () => this.updateStats();
-      this.topicBrowser = new TopicBrowser(this.history, () => this.updateStats());
-      this.listBrowser = new TopicListBrowser(this.history, () => this.updateStats());
+      // 面板就绪后启动每日定时检查（stopScheduler 里清理，重建面板不会重复开）
+      this.startScheduler();
+
+      // 展示上次自动结束的原因（手动停止不记录，重启脚本后仍在）
+      const lastFinishReason = Storage.get('auto_finish_reason', '');
+      if (lastFinishReason) {
+        document.getElementById('auto-status').textContent = `上次结束：${lastFinishReason}`;
+      }
 
       const autoResume = Storage.get('auto_running', false);
 
@@ -1301,6 +1410,10 @@
           margin: -4px 0 8px 38px; font-size: 10px; line-height: 1.5;
           color: rgba(255,255,255,0.58);
         }
+        /* 定时时间输入：与分段选择器同排，固定窄宽 */
+        #linuxdo-auto-panel .sched-time { flex: none; width: 66px; }
+        /* 目标数字输入：两个并排平分 */
+        #linuxdo-auto-panel .target-input { flex: 1 1 0; min-width: 0; }
 
         /* 动作按钮 */
         #linuxdo-auto-panel .action-btn {
@@ -1378,6 +1491,20 @@
             </label>
           </div>
           <div class="row-hint">默认按楼层号数到第 N 楼；勾选后从上次读到的位置往后数 N 楼，已读楼层不计入</div>
+          <div class="row"><span class="row-label">定时</span><div class="seg">
+            <button class="speed-btn sched-btn ${scheduleEnabled?'active':''}" data-sched="true">开启</button>
+            <button class="speed-btn sched-btn ${!scheduleEnabled?'active':''}" data-sched="false">关闭</button>
+          </div>
+            <input type="time" class="floor-input sched-time" id="sched-time-input" step="60"
+              title="每天到这个时间自动开始新一轮浏览（同一天只触发一次，错过不补跑）">
+          </div>
+          <div class="row"><span class="row-label">目标</span>
+            <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
+              placeholder="浏览帖数" title="本轮浏览满 N 帖自动停止，0 表示不限">
+            <input type="number" class="floor-input target-input" id="target-likes-input" min="0" step="1"
+              placeholder="点赞数" title="本轮点满 N 个赞自动停止，0 表示不限">
+          </div>
+          <div class="row-hint">到点自动开始；浏览或点赞任一达标即自动停止，0 为不限</div>
           <button class="action-btn btn-start" id="btn-auto-start">开始自动浏览</button>
           <button class="action-btn btn-stop" id="btn-auto-stop" style="display:none;">停止运行</button>
           <button class="action-btn btn-clear" id="btn-clear-history">清除浏览记录</button>
@@ -1387,6 +1514,7 @@
             <div class="stats-row"><span class="stats-label">本次帖子/回复</span><span class="stats-value"><span id="session-viewed">0</span> / <span id="session-replies">0</span></span></div>
             <div class="stats-row"><span class="stats-label">本次点赞</span><span class="stats-value" id="session-liked">0</span></div>
             <div class="stats-row"><span class="stats-label">本次总阅读量</span><span class="stats-value" id="session-read-count">0</span></div>
+            <div class="stats-row"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
           </div>
         </div>
       `;
@@ -1439,6 +1567,40 @@
       const floorCheck = document.getElementById('floor-unread-only');
       floorCheck.checked = floorLimitUnreadOnly;
       floorCheck.addEventListener('change', (e) => setFloorLimitUnreadOnly(e.target.checked));
+
+      // 每日定时：开关分段 + 时间输入
+      document.querySelectorAll('.sched-btn[data-sched]').forEach(btn => btn.addEventListener('click', (e) => {
+        setSchedule(e.target.dataset.sched === 'true', document.getElementById('sched-time-input').value);
+        document.querySelectorAll('.sched-btn[data-sched]').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        document.getElementById('sched-time-input').value = scheduleTime;
+        this.updateSchedStatus();
+      }));
+
+      const schedTimeInput = document.getElementById('sched-time-input');
+      schedTimeInput.value = scheduleTime;
+      schedTimeInput.addEventListener('keydown', (e) => e.stopPropagation());
+      schedTimeInput.addEventListener('change', (e) => {
+        setSchedule(scheduleEnabled, e.target.value);
+        e.target.value = scheduleTime;
+        this.updateSchedStatus();
+      });
+
+      // 会话目标：浏览帖数 / 点赞数（0 = 不限）
+      const bindTargetInput = (input, applyTargets) => {
+        input.addEventListener('keydown', (e) => e.stopPropagation());
+        input.addEventListener('change', (e) => {
+          applyTargets(e.target.value);
+          e.target.value = (input === topicsInput) ? (topicTarget > 0 ? topicTarget : '') : (likeTarget > 0 ? likeTarget : '');
+          this.updateSchedStatus();
+        });
+      };
+      const topicsInput = document.getElementById('target-topics-input');
+      topicsInput.value = topicTarget > 0 ? topicTarget : '';
+      bindTargetInput(topicsInput, (v) => setTargets(v, likeTarget));
+      const likesInput = document.getElementById('target-likes-input');
+      likesInput.value = likeTarget > 0 ? likeTarget : '';
+      bindTargetInput(likesInput, (v) => setTargets(topicTarget, v));
 
       document.getElementById('page-type').textContent = getPageType();
     }
@@ -1587,9 +1749,17 @@
       document.getElementById('session-replies').textContent = stats.sessionReplies;
       document.getElementById('session-liked').textContent = stats.sessionLiked;
       document.getElementById('session-read-count').textContent = readingTracker.count;
+      this.updateSchedStatus();
     }
 
-    async start(isManual = false) {
+    async start(isManual = false, resetSessionFlag = false) {
+      // 手动开始或定时触发都视为新一轮会话：清零浏览/点赞/回复的会话计数与阅读量
+      // （自动恢复运行时不清零，保证刷新/跳转后延续）
+      if (isManual || resetSessionFlag) {
+        this.history.resetSession();
+        readingTracker.reset();
+      }
+
       // 如果是手动启动，检查是否有其他正在运行的进程
       if (isManual) {
         const lastActiveTime = Storage.get('linuxdo_active_tab_time', 0);
@@ -1599,9 +1769,6 @@
                 return;
             }
         }
-
-        // 手动点击「开始」时清零本次总阅读量（自动恢复运行时不清零，保证刷新/跳转后延续）
-        readingTracker.reset();
       }
 
       this.isEnabled = true;
@@ -1643,6 +1810,69 @@
       document.getElementById('auto-status').textContent = '已停止';
       document.getElementById('status-dot').className = 'status-indicator stopped';
       this.panel.classList.remove('running');
+    }
+
+    // ==================== 每日定时 ====================
+
+    // 启动定时轮询：每 30 秒检查一次是否到了设定时刻；已启动则跳过，防止重复 setInterval
+    startScheduler() {
+      if (this.schedTimer) return;
+      this.schedTimer = setInterval(() => this.checkSchedule(), 30000);
+      this.checkSchedule();
+      log('每日定时检查已启动（每 30 秒一次）');
+    }
+
+    stopScheduler() {
+      if (this.schedTimer) {
+        clearInterval(this.schedTimer);
+        this.schedTimer = null;
+      }
+    }
+
+    todayKey() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    }
+
+    // 到点自动开始新一轮浏览：同一天只触发一次；本页或其他标签页正在运行则跳过
+    checkSchedule() {
+      if (!scheduleEnabled) return;
+      if (this.isEnabled) return;
+      const today = this.todayKey();
+      if (Storage.get('sched_last_run_date', '') === today) return;
+
+      const now = new Date();
+      const [hh, mm] = String(scheduleTime).split(':').map(Number);
+      if (now.getHours() < hh || (now.getHours() === hh && now.getMinutes() < mm)) return;
+
+      // 其他标签页可能在运行：交给那个页面自然收尾；心跳超过 15 秒视为已失效可接管
+      if (Storage.get('auto_running', false) &&
+          Date.now() - Storage.get('linuxdo_active_tab_time', 0) < 15000) return;
+
+      Storage.set('sched_last_run_date', today);
+      log(`⏰ 每日定时触发（${scheduleTime}），自动开始新一轮浏览`);
+      this.start(false, true);
+    }
+
+    // 本轮结束的统一收尾点：彻底停止并记录结束原因，
+    // 避免「只停列表浏览器但自动化仍运行」导致卡死检测 30 秒后反复重启空转
+    finishRun(reason) {
+      this.stop();
+      this.history.flushPending();
+      Storage.set('auto_finish_reason', reason);
+      document.getElementById('auto-status').textContent = `已结束：${reason}`;
+      log(`本轮结束：${reason}`);
+    }
+
+    // 面板上展示定时与目标配置的当前状态
+    updateSchedStatus() {
+      const el = document.getElementById('sched-status');
+      if (!el) return;
+      const remain = topicTarget > 0 ? topicTarget : '不限';
+      const likes = likeTarget > 0 ? likeTarget : '不限';
+      el.textContent = scheduleEnabled
+        ? `${scheduleTime} 自动开始 · 目标 ${remain} 帖 / ${likes} 赞`
+        : '每日定时关闭';
     }
 
     clearHistory() {
