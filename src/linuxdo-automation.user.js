@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.8
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
+// @version      2.6.9
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -409,6 +409,36 @@
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
+  // 【反检测 v2.6.9】点击式 SPA 导航：真人点话题链接走 Ember 客户端路由
+  // （pushState 改 URL + XHR 拉 /t/topic/{id}.json），服务端日志看不到整页 HTML 请求；
+  // 而脚本若一律 location.href 整页跳转，会出现「全站浏览全整页、零 JSON」的强指纹。
+  // 改为点击真实链接，三种结局都能自洽：
+  //   ① 被 Ember 拦截 → SPA 跳转（URL 变化由 checkUrlChange 轮询接管、换新浏览器）；
+  //   ② 未被拦截 → 浏览器默认整页导航（等价 location.href，页面销毁、脚本重注入）；
+  //   ③ 点击无效 → 1.2s 后 URL 未变，兜底整页跳转。
+  // 强制 target=_self：避免链接自带 _blank 时开新标签，本页流程悬空。
+  function navigateViaLinkClick(link, fallbackHref) {
+    const before = window.location.href;
+    try {
+      if (link) {
+        if (link.target === '_blank' || link.target === '_top') link.target = '_self';
+        link.click();
+      }
+    } catch (e) {
+      window.location.href = fallbackHref || before;
+      return;
+    }
+    setTimeout(() => {
+      if (window.location.href === before) {
+        window.location.href = fallbackHref || before;
+      } else {
+        // URL 变了但页面没销毁 = Ember 拦截成功、SPA 跳转进行中：
+        // 标记录下「本页是从列表 SPA 进来的」，回去时优先走 history.back()
+        try { window._ldSpaEntry = true; } catch (e) {}
+      }
+    }, 1200);
+  }
+
   // 登录状态三态检测：true=已登录，false=未登录，null=无法判定（页面未就绪或 Cloudflare 挑战页）
   // 优先读取 #data-preloaded（服务端直出，脚本注入时必然存在），
   // 避免与 Ember 渲染 #current-user 竞速导致误判（脚本注入时 header 尚未渲染）
@@ -470,15 +500,24 @@
   // 读取当前话题「实际总楼层数」（楼主帖算 1 楼，一条回复 = 一楼）。
   // 同样取自 #data-preloaded 的 topic 对象：posts_count 含楼主帖；highest_post_number 兜底。
   // 用真实楼数做硬上限：帖子实际只有 2 楼时，读完 2 楼即收工，
-  // 不再继续滚动等「永远等不到的新楼」，也避免浮窗楼层数虚高
+  // 不再继续滚动等「永远等不到的新楼」，也避免浮窗楼层数虚高。
+  // 【反检测 v2.6.9】SPA 客户端路由进入话题时 #data-preloaded 仍是列表页数据（无 topic_ 键），
+  // 此时回退读页面进度条的真实总楼数（#topic-progress-total），避免误判为 0 导致等不存在的楼
   function getTopicTotalPosts(topicId) {
     try {
       const el = document.querySelector('#data-preloaded');
-      if (!el) return 0;
-      const raw = JSON.parse(el.textContent)[`topic_${topicId}`];
-      if (!raw) return 0;
-      const topic = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      return Number(topic.posts_count) || Number(topic.highest_post_number) || 0;
+      if (el) {
+        const raw = JSON.parse(el.textContent)[`topic_${topicId}`];
+        if (raw) {
+          const topic = typeof raw === 'string' ? JSON.parse(raw) : raw;
+          const n = Number(topic.posts_count) || Number(topic.highest_post_number) || 0;
+          if (n > 0) return n;
+        }
+      }
+      // SPA 进入兜底：Discourse 页面进度条会显示真实总楼数
+      const totalEl = document.querySelector('#topic-progress-total');
+      const total = totalEl ? Number(totalEl.textContent.trim()) : 0;
+      return total > 0 ? total : 0;
     } catch (e) {
       return 0;
     }
@@ -747,44 +786,23 @@
       return this.readKeys.size;
     }
 
-    addFromBody(body) {
-      try {
-        const params = new URLSearchParams(body);
-        const topicId = params.get('topic_id');
-        if (!topicId) return;
+    // 【反检测 v2.6.9】统计来源从「拦截网络上报」改为「DOM 逐楼计数」：
+    // 自动浏览在 processVisiblePosts 里逐楼处理，直接在这里计数（同楼层去重累计、
+    // 持久化、楼层上限校验逻辑全部保留），不再需要包装页面 fetch/XHR。
+    // 手动浏览（不开自动化、用户自己翻页）不再计入阅读楼层——浮窗统计本就以自动浏览为主。
+    addFloor(topicId, floor) {
+      if (!topicId || !floor) return;
+      // 楼层上限检查：帖子实际只有 2 楼就不会数出 17 楼（被删帖留下的编号空洞不被计入）
+      const totalPosts = getTopicTotalPosts(topicId);
+      if (totalPosts > 0 && floor > totalPosts) return;
 
-        const newKeys = [];
-        for (const [key, value] of params.entries()) {
-          // 校验条目格式：楼层号与阅读毫秒数都必须是纯数字，异常条目不计入
-          const match = key.match(/^timings\[(\d+)\]$/);
-          if (!match || !/^\d+$/.test(value)) continue;
-          const floor = Number(match[1]);
-          // 楼层上限检查：上报可能包含超出话题实际楼数的伪楼层（如被删帖留下的编号空洞），
-          // 超过实际总楼数的条目直接丢弃，浮窗/统计才不会被虚高楼层误导（实际 2 楼就不会数出 17 楼）
-          const totalPosts = getTopicTotalPosts(topicId);
-          if (totalPosts > 0 && floor > totalPosts) continue;
-          newKeys.push(`${topicId}:${floor}`);
-        }
-        if (newKeys.length === 0) return;
-
-        this.syncFromStorage();
-        let added = 0;
-        for (const readKey of newKeys) {
-          if (!this.readKeys.has(readKey)) {
-            this.readKeys.add(readKey);
-            added++;
-          }
-        }
-        if (added > 0) {
-          // 阅读量去重键会随会话持续增长，设上限防长期运行无限膨胀（超限淘汰最旧）
-          trimSet(this.readKeys, 20000);
-          Storage.set('session_read_keys', [...this.readKeys]);
-          log(`阅读上报成功，新增 ${added} 条，本次总阅读量 ${this.count}`);
-        }
-        this.onUpdate?.();
-      } catch (e) {
-        log('解析 timings 上报数据失败:', e);
-      }
+      this.syncFromStorage();
+      const readKey = `${topicId}:${floor}`;
+      if (this.readKeys.has(readKey)) return;
+      this.readKeys.add(readKey);
+      trimSet(this.readKeys, 20000);
+      Storage.set('session_read_keys', [...this.readKeys]);
+      this.onUpdate?.();
     }
 
     // 与存储对齐：epoch 变化说明其他标签页清零过，丢弃本页内存中的旧数据；
@@ -815,56 +833,9 @@
   // 拦截 XHR 与 fetch 两条通道的 /topics/timings 上报，响应 2xx 才计数。
   // hook 必须装在页面真实 window（unsafeWindow）上：带 @grant 的脚本运行在
   // 脚本管理器沙箱中，改写沙箱自己的 XMLHttpRequest/fetch 拦截不到页面请求
-  function installTimingsHook() {
-    const pageWindow = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
-    const TIMINGS_PATH = '/topics/timings';
-    const isTimingsUrl = (url) => String(url).includes(TIMINGS_PATH);
-    // 沙箱与页面可能不同 realm，不能用 instanceof Request，按结构判断
-    const isRequestLike = (v) => !!v && typeof v === 'object' &&
-      typeof v.url === 'string' && typeof v.clone === 'function';
-
-    const xhrProto = pageWindow.XMLHttpRequest.prototype;
-    const originalOpen = xhrProto.open;
-    const originalSend = xhrProto.send;
-
-    xhrProto.open = function(method, url) {
-      this._isTimingsRequest = isTimingsUrl(url);
-      return originalOpen.apply(this, arguments);
-    };
-
-    xhrProto.send = function(body) {
-      if (this._isTimingsRequest) {
-        this.addEventListener('load', function() {
-          if (this.status >= 200 && this.status < 300) {
-            readingTracker.addFromBody(body);
-          }
-        });
-      }
-      return originalSend.apply(this, arguments);
-    };
-
-    const originalFetch = pageWindow.fetch;
-    pageWindow.fetch = function(input, init) {
-      const url = isRequestLike(input) ? input.url : input;
-      if (!isTimingsUrl(url)) {
-        return originalFetch.apply(this, arguments);
-      }
-
-      // body 可能在 init 上，也可能包在 Request 对象里（后者需 clone 读取）
-      const bodyPromise = init?.body !== undefined && init?.body !== null
-        ? Promise.resolve(init.body)
-        : (isRequestLike(input) ? input.clone().text().catch(() => null) : Promise.resolve(null));
-
-      return originalFetch.apply(this, arguments).then(response => {
-        if (response.ok) {
-          bodyPromise.then(body => {
-            if (body) readingTracker.addFromBody(body);
-          });
-        }
-        return response;
-      });
-    };
-  }
+  // 【反检测 v2.6.9】已整体移除：包装页面 fetch/XMLHttpRequest 是实打实的客户端指纹——
+  // 站内 JS 用 fetch.toString()/原型对比即可确认脚本存在。阅读楼层统计改为 DOM 来源
+  // （processVisiblePosts 逐楼处理时直接计数），不再触碰页面网络层。
 
   // ==================== 滚动控制器 ====================
 
@@ -1136,6 +1107,8 @@
           if (floor > this.maxFloorSeen) this.maxFloorSeen = floor;
           if (floor > this.floorBaseline) this.unreadFloorsRead++;
           this.history.addReplyViewed();
+          // 【反检测 v2.6.9】阅读楼层统计改为 DOM 来源（不再拦截网络上报）
+          readingTracker.addFloor(getCurrentTopicId(), floor);
           this.onStatsUpdate?.();
 
           if (CONFIG.minReadTime > 0) {
@@ -1169,7 +1142,14 @@
       if (likeMainOnly && postElement && postElement.id !== 'post_1') return false;
       if (this.history.sessionLiked >= CONFIG.maxLikesPerSession) return false;
       const now = Date.now();
-      if (now - this.lastLikeTime < CONFIG.minLikeInterval) return false;
+      const elapsed = now - this.lastLikeTime;
+      // 【反检测 v2.6.9】点赞间隔不再设「绝不下限」的硬门槛：真人的点赞间隔分布里
+      // 偶尔会出现 1 秒内的快速连赞（兴奋/手滑），恒定的 >=2000ms 下限本身就是
+      // 统计指纹。改为软性：绝大多数维持最小间隔，偶发（约 8%）放行一次快速连赞
+      // （400ms 以上即可），过快仍会被 429 风控兜底（handleLikeLimit 自动关点赞）
+      if (elapsed < CONFIG.minLikeInterval) {
+        if (!(elapsed >= 400 && Math.random() < 0.08)) return false;
+      }
       return Math.random() < CONFIG.likeChance;
     }
 
@@ -1265,7 +1245,25 @@
       await humanDelay(CONFIG.returnToListDelay, CONFIG.returnToListDelay * 1.5);
       // 回到进入话题前的浏览目标（分区页或全站列表）：列表浏览器跳转前已把来源路径存进 Storage
       const returnUrl = Storage.get('session_return_path', '') || getDefaultBrowsePath();
-      window.location.href = returnUrl;
+      // 【反检测 v2.6.9】返回列表优先走 Ember SPA（history.back 触发 popstate 客户端路由，
+      // 服务端看不到整页 HTML 请求）；仅当本页确实是从列表 SPA 进来的（点击被 Ember 拦截、
+      // URL 变化且页面未销毁——由 navigateViaLinkClick 在兜底检查里置位 _spaEntry）才用它，
+      // 否则退回整页跳转（等价 v2.6.8 行为，安全兜底）。真人「读完帖点浏览器←」就是这样。
+      if (window._ldSpaEntry) {
+        window._ldSpaEntry = false;
+        window.history.back();
+        // 后置校验：2s 内若 URL 没回到列表页（异常历史），强制整页兜底
+        const beforeUrl = window.location.href;
+        setTimeout(() => {
+          try {
+            if (getPageType() !== 'list') window.location.href = returnUrl;
+          } catch (e) {
+            if (window.location.href === beforeUrl) window.location.href = returnUrl;
+          }
+        }, 2000);
+      } else {
+        window.location.href = returnUrl;
+      }
     }
   }
 
@@ -1384,8 +1382,13 @@
       log(`进入话题: ${pick.topicId}${pick.unread ? '（未读）' : ''}`);
       // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
       Storage.set('session_return_path', window.location.pathname);
-      // 直接改 location 强制当前页跳转（不点击链接，因此无需理会其 target 属性）
-      window.location.href = pick.titleLink.href;
+      // 【反检测 v2.6.9】真人点话题是 Ember 客户端路由（SPA：pushState + XHR 拉
+      // /t/topic/{id}.json，服务端看不到整页 HTML 请求）；整页 location.href 跳转
+      // 会在访问日志里留下「全站浏览零 JSON 全整页」的强指纹。改为点击真实链接：
+      // 被 Ember 拦截则 SPA 跳转（URL 变化由 checkUrlChange 接管换浏览器）；
+      // 未被拦截则浏览器照常整页导航（等价 location.href）；点击无效则兜底整页跳转。
+      // target 属性强制 _self，避免链接带 _blank 时开新标签导致本页流程悬空
+      navigateViaLinkClick(pick.titleLink, pick.titleLink.href);
       return true;
     }
 
@@ -2700,7 +2703,6 @@
   }
 
   // ==================== 启动 ====================
-  installTimingsHook();
   const automation = new LinuxDoAutomation();
   automation.init();
 
