@@ -1442,6 +1442,8 @@
           display: flex; align-items: center; gap: 6px; flex: 1;
           font-size: 11px; color: rgba(255,255,255,0.76); cursor: pointer;
         }
+        /* 与楼层输入同排的紧凑版勾选（只计未读） */
+        #linuxdo-auto-panel .floor-check-inline { flex: none; margin-left: 6px; }
         #linuxdo-auto-panel .floor-check input {
           width: 13px; height: 13px; margin: 0; flex: none;
           accent-color: #fff; cursor: pointer;
@@ -1452,7 +1454,12 @@
           color: rgba(255,255,255,0.58);
         }
         /* 定时时间输入：与分段选择器同排，固定窄宽 */
-        #linuxdo-auto-panel .sched-time { flex: none; width: 66px; }
+        #linuxdo-auto-panel .sched-time { flex: none; width: 92px; }
+        /* 原生时间控件会挤一个时钟小图标，把「09:00」文字挤没（显示不全的根因）：去掉图标并收紧内部留白 */
+        #linuxdo-auto-panel input[type="time"]::-webkit-calendar-picker-indicator { display: none; -webkit-appearance: none; }
+        #linuxdo-auto-panel input[type="time"]::-webkit-datetime-edit { padding: 0; }
+        /* Firefox 数字框自带步进箭头，隐掉保持与 Chrome 一致 */
+        #linuxdo-auto-panel .floor-input { -moz-appearance: textfield; }
         /* 目标数字输入：两个并排平分 */
         #linuxdo-auto-panel .target-input { flex: 1 1 0; min-width: 0; }
 
@@ -1467,9 +1474,17 @@
           border-top: 1px solid rgba(255,255,255,0.14); margin: 2px 0 6px; padding-top: 6px;
         }
         #linuxdo-auto-panel .adv-box .row-hint { grid-column: 1 / -1; }
+        /* 高级设置的 4 字标签放不进 28px 标签列（会被截断），改成「标签在上、输入框在下」的卡片式 */
+        #linuxdo-auto-panel .adv-box .row { flex-direction: column; align-items: stretch; gap: 3px; margin-bottom: 7px; }
+        #linuxdo-auto-panel .adv-box .row-label { width: auto; font-size: 11px; color: rgba(255,255,255,0.68); }
+        #linuxdo-auto-panel .adv-box .floor-input { text-align: left; }
         #linuxdo-auto-panel .btn-advanced {
           border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1); color: #fff;
         }
+        /* 面板内容超高时内部滚动，避免整块超出屏幕显示不全 */
+        #linuxdo-auto-panel .panel-content { max-height: 74vh; overflow-y: auto; }
+        #linuxdo-auto-panel .panel-content::-webkit-scrollbar { width: 6px; }
+        #linuxdo-auto-panel .panel-content::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.25); border-radius: 3px; }
 
         /* 动作按钮 */
         #linuxdo-auto-panel .action-btn {
@@ -1487,7 +1502,7 @@
 
         /* 统计区 */
         #linuxdo-auto-panel .stats { margin-top: 10px; padding: 9px 12px; background: rgba(0,0,0,0.14); border-radius: 10px; }
-        #linuxdo-auto-panel .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 5px 0; font-size: 12px; }
+        #linuxdo-auto-panel .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 4px 0; font-size: 12px; }
         #linuxdo-auto-panel .stats-label { color: rgba(255,255,255,0.68); }
         #linuxdo-auto-panel .stats-value { font-weight: 600; font-variant-numeric: tabular-nums; }
         #linuxdo-auto-panel .status-indicator { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
@@ -1540,10 +1555,8 @@
             <div class="row"><span class="row-label">楼层</span>
               <input type="number" class="floor-input" id="floor-limit-input" min="0" step="1"
                 placeholder="不限" title="每帖只浏览前 N 楼后换下一帖，留空或 0 表示不限">
-            </div>
-            <div class="row"><span class="row-label"></span>
-              <label class="floor-check" title="开启后已读楼层滚过不计数，只数上次阅读位置之后的新楼层">
-                <input type="checkbox" id="floor-unread-only">只计未读楼层
+              <label class="floor-check floor-check-inline" title="开启后已读楼层滚过不计数，只数上次阅读位置之后的新楼层">
+                <input type="checkbox" id="floor-unread-only">只计未读
               </label>
             </div>
             <div class="row-hint">填 N 则每帖读到第 N 楼就换下一帖，留空或 0 表示整帖读完；勾选只计未读则不重复数已读楼层</div>
@@ -1562,9 +1575,7 @@
             </div>
             <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览或点赞任一达标即自动停止，0 为不限</div>
           </div>
-          <div class="row"><span class="row-label"></span>
-            <button class="action-btn btn-advanced" id="btn-advanced">⚙ 高级设置</button>
-          </div>
+          <button class="action-btn btn-advanced" id="btn-advanced">⚙ 高级设置</button>
           <div class="adv-box hidden" id="adv-box">
             <div class="row"><span class="row-label">翻页步长</span><input type="number" class="floor-input adv-input" id="adv-scroll-step" min="200" max="1000" step="50" placeholder="跟随速度(px)"></div>
             <div class="row"><span class="row-label">翻页间隔</span><input type="number" class="floor-input adv-input" id="adv-scroll-interval" min="300" max="5000" step="100" placeholder="跟随速度(ms)"></div>
