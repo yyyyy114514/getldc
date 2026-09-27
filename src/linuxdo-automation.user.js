@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.9
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）
+// @version      2.7.0
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标、每帖重抽点赞概率与阅读/滚动节奏，点赞走页面真实按钮
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -179,6 +179,12 @@
   // 半透明信息浮窗：开启后面板不再显示统计信息，改为页面左上角半透明浮窗显示
   let floatingStats = false;
 
+  // 【v2.7.0 人化随机模式】总开关：开启后速度/定时/目标不再用固定配置，
+  // 改为每天按真人行为权重随机生成（见 ensureDailyProfile / speedValue / checkSchedule），
+  // 模拟普通用户的长期行为分布。速度档位、定时时间、目标数值等原有设置全部保留作为基准，
+  // 仅在本模式开启时被每日随机配置接管。点赞等所有操作均走页面真实按钮点击（见 clickLikeButton）。
+  let humanMode = false;
+
   // 点赞概率预设
   const LIKE_CHANCE_PRESETS = {
     low: { name: '低', value: 0.05 },      // 5%
@@ -205,26 +211,60 @@
 
   const CONFIG = {
     // 动态从速度预设获取；高级设置里的数值优先（>0 覆盖预设，0/留空跟随预设）
-    get scrollStep() { return Storage.get('adv_scroll_step', 0) || SPEED_PRESETS[currentSpeed].scrollStep; },
-    get scrollInterval() { return Storage.get('adv_scroll_interval', 0) || SPEED_PRESETS[currentSpeed].scrollInterval; },
-    get loadWaitTime() { return Storage.get('adv_load_wait', 0) || SPEED_PRESETS[currentSpeed].loadWaitTime; },
-    get minReadTime() { return Storage.get('adv_min_read', 0) || SPEED_PRESETS[currentSpeed].minReadTime; },
-    get maxReadTime() { return Storage.get('adv_max_read', 0) || SPEED_PRESETS[currentSpeed].maxReadTime; },
-    get noNewContentRetry() { return SPEED_PRESETS[currentSpeed].noNewContentRetry; },
+    // 【v2.7.0 人化随机】人化模式下不用慢/中/快档位、无视高级设置数值，全部按
+    // 今日节奏 τ × 每帖喜好参数生成（见 speedValue / refreshTopicParams）
+    get scrollStep() {
+      if (humanMode) return speedValue('scrollStep');            // 人化接管：τ×每帖
+      return Storage.get('adv_scroll_step', 0) || speedValue('scrollStep');
+    },
+    get scrollInterval() {
+      if (humanMode) return speedValue('scrollInterval');
+      return Storage.get('adv_scroll_interval', 0) || speedValue('scrollInterval');
+    },
+    get loadWaitTime() {
+      if (humanMode) return speedValue('loadWaitTime');
+      return Storage.get('adv_load_wait', 0) || speedValue('loadWaitTime');
+    },
+    get minReadTime() {
+      if (humanMode) return speedValue('minReadTime');
+      return Storage.get('adv_min_read', 0) || speedValue('minReadTime');
+    },
+    get maxReadTime() {
+      if (humanMode) return speedValue('maxReadTime');
+      return Storage.get('adv_max_read', 0) || speedValue('maxReadTime');
+    },
+    get noNewContentRetry() { return speedValue('noNewContentRetry'); },
 
     // 点赞设置（动态从预设获取；高级设置百分比 >0 覆盖，上限 50%）
+    // 【v2.7.0 人化随机】人化模式下每换一帖重抽一次点赞概率（4 档加权，见 refreshTopicParams）
     get likeChance() {
+      if (humanMode) return perTopicLikeChance;
       const adv = Storage.get('adv_like_chance', 0);
       return adv > 0 ? Math.min(50, adv) / 100 : LIKE_CHANCE_PRESETS[currentLikeChance].value;
     },
-    get minLikeInterval() { return Storage.get('adv_like_interval', 0) || 2000; },  // 最小点赞间隔 (ms)
+    get minLikeInterval() {
+      // 最小点赞间隔 (ms)；人化模式随每帖时间喜好缩放
+      if (humanMode) return Math.round(2000 * perTopicTimeScale);
+      return Storage.get('adv_like_interval', 0) || 2000;
+    },
 
     // 会话设置（动态从目标配置读取，达到即自动停止）
-    get maxLikesPerSession() { return likeTarget; },
-    get maxTopicsPerSession() { return topicTarget; },
+    // 【v2.7.0 人化随机】开启人化后目标不看用户设定值：每天在 min~max 范围内随机抽取
+    // （见 humanTopicTarget/humanLikeTarget，0=不限）——完全脱离用户设定的固定数值
+    get maxLikesPerSession() {
+      if (humanMode) return humanLikeTarget();
+      return likeTarget;
+    },
+    get maxTopicsPerSession() {
+      if (humanMode) return humanTopicTarget();
+      return topicTarget;
+    },
 
-    // 返回列表设置（高级设置可覆盖）
-    get returnToListDelay() { return Storage.get('adv_return_delay', 0) || 1000; },
+    // 返回列表设置（高级设置可覆盖；人化模式随每帖时间喜好缩放）
+    get returnToListDelay() {
+      if (humanMode) return Math.round(1000 * perTopicTimeScale);
+      return Storage.get('adv_return_delay', 0) || 1000;
+    },
 
     // 反检测：滚动步长随机抖动范围 (px)
     get scrollJitter() { return Storage.get('adv_scroll_jitter', 0) || 60; },
@@ -242,6 +282,257 @@
       Storage.set('speed_preset', preset);
       log(`速度设置为: ${SPEED_PRESETS[preset].name}`);
     }
+  }
+
+  // ==================== 【v2.7.0】人化随机模式 ====================
+  // 目标：让「长期行为」无法形成固定指纹。普通用户每天的节奏不是恒定的——
+  // 状态好时刷得快，摸鱼时刷得慢；上论坛的时间每天漂移；目标达成点偶尔超额。
+  // 本模式把长期固定点改成「两层随机」：
+  //   每天一摇（当天状态稳定）：节奏倍率 τ、所选时段内随机基准时刻+大偏移、每日目标
+  //     （帖/赞 在用户设定的 min~max 范围内随机整数，0=不限；时长上限由 human_duration 定死）
+  //   每帖一摇（换帖重抽，模拟用户喜好）：点赞概率、阅读投入度、滚动步长、翻页间隔/加载等待
+  // 逐秒/逐操作乱抖反而会在统计上露馅（方差过大的均匀噪声也非真人）。
+
+  // 今日节奏 τ：>1 更慢、<1 更快。权重按普通用户浏览速度分布：
+  //   极快 3%（0.35~0.55）  偏快 12%（0.55~0.8）  正常 40%（0.8~1.15）
+  //   偏慢 30%（1.15~1.5）  很慢 12%（1.5~1.9）   极慢 3%（1.9~2.3）
+  function drawDailyTempo() {
+    const r = Math.random();
+    if (r < 0.03) return 0.35 + Math.random() * 0.2;
+    if (r < 0.15) return 0.55 + Math.random() * 0.25;
+    if (r < 0.55) return 0.8 + Math.random() * 0.35;
+    if (r < 0.85) return 1.15 + Math.random() * 0.35;
+    if (r < 0.97) return 1.5 + Math.random() * 0.4;
+    return 1.9 + Math.random() * 0.4;
+  }
+
+  // 今日定时偏移（分钟，带方向）：真人每天不会准点上线，偏移带权重：
+  //   55% ±0~15 分   25% ±15~45 分   12% ±45~120 分
+  //   6% ±2~4 小时   2% ±4~8 小时（偶尔差大半天才上来）
+  function drawSchedOffset() {
+    const r = Math.random();
+    let max;
+    if (r < 0.55) max = 15;
+    else if (r < 0.80) max = 45;
+    else if (r < 0.92) max = 120;
+    else if (r < 0.98) max = 240;
+    else max = 480;
+    const sign = Math.random() < 0.5 ? -1 : 1;
+    return sign * randomInt(0, max);
+  }
+
+  // 每日目标：在用户设定的 min~max 范围内随机整数（0=不限）。
+  // lo 为 0 时表示「下限不限」，实际目标至少取 1；hi 为 0 表示该维度不限（返回 0）
+  function drawRangeTarget(lo, hi) {
+    const min = Math.max(0, Math.floor(Number(lo) || 0));
+    const max = Math.max(0, Math.floor(Number(hi) || 0));
+    if (max <= 0) return 0; // 上限 0 = 不限
+    const from = Math.min(min, max) >= 1 ? Math.min(min, max) : 1;
+    const to = Math.max(min, max);
+    return randomInt(from, to);
+  }
+
+  // 一天一摇：按当天日期缓存当日配置，跨天自动重摇。
+  // 用 GM 存储持久化，整页跳转/刷新不会丢；所有标签页共享同一套（真人只有一个行为基线）
+  function todayKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  // 人化模式下每日目标（供 CONFIG 读取；0=不限）
+  function humanTopicTarget() {
+    if (!humanMode) return 0;
+    ensureDailyProfile();
+    return parseInt(Storage.get('human_topic_target', 0), 10) || 0;
+  }
+
+  function humanLikeTarget() {
+    if (!humanMode) return 0;
+    ensureDailyProfile();
+    return parseInt(Storage.get('human_like_target', 0), 10) || 0;
+  }
+
+  // 每帖一摇的喜好参数（内存态，只在本会话内生效；页面刷新/换帖自动重抽）。
+  // 真人喜好是多变的：同一篇帖子可能很感兴趣读得久、下一帖划两下就走。
+  // 换帖重抽的维度：点赞概率（4档加权）、阅读投入度、滚动步长、翻页间隔、加载等待。
+  let perTopicLikeChance = 0.15;   // 当前帖的点赞概率
+  let perTopicReadScale = 1;       // 阅读投入度（min/maxReadTime 缩放）
+  let perTopicScrollScale = 1;     // 滚动步长缩放
+  let perTopicTimeScale = 1;       // 翻页间隔/加载等待 缩放
+  function refreshTopicParams() {
+    if (!humanMode) return;
+    // 点赞概率 4 档加权：低5% 30% / 中15% 40% / 高25% 25% / 极高40% 5%
+    const r = Math.random();
+    if (r < 0.30) perTopicLikeChance = 0.05;
+    else if (r < 0.70) perTopicLikeChance = 0.15;
+    else if (r < 0.95) perTopicLikeChance = 0.25;
+    else perTopicLikeChance = 0.40;
+    // 阅读投入度 0.7~1.3；滚动/时间类 0.85~1.15（帖子难易、长短起伏）
+    perTopicReadScale = 0.7 + Math.random() * 0.6;
+    perTopicScrollScale = 0.85 + Math.random() * 0.3;
+    perTopicTimeScale = 0.85 + Math.random() * 0.3;
+  }
+
+  // 每日配置的时间段 → 定时基准时刻。真人不会固定同一个点上线，
+  // 而是在所选大时段（清晨/上午/下午/晚上/深夜）内每天随机一个基准时刻（分钟 0~1439）。
+  // 晚睡党可能深夜 23:00~凌晨 5:00 出没，跨午夜按 0~1439 分钟内随机后仍归一位
+  const HUMAN_TIME_RANGES = {
+    early: ['清晨', 300, 480],       // 05:00~07:59
+    morning: ['上午', 480, 720],     // 08:00~11:59
+    afternoon: ['下午', 720, 1080],  // 12:00~17:59
+    evening: ['晚上', 1080, 1380],   // 18:00~22:59
+    night: ['深夜', 1380, 300]       // 23:00~04:59（跨午夜）
+  };
+  function getHumanTimeRange() {
+    return Storage.get('human_time_range', 'evening');
+  }
+  function drawTimeBase() {
+    const r = HUMAN_TIME_RANGES[getHumanTimeRange()];
+    if (!r) return randomInt(300, 1439);
+    const [label, start, end] = r;
+    let base;
+    if (end < start) {
+      // 跨午夜区间（深夜 23:00~次日04:59）：把「start 之后到 23:59」与「00:00~end」两段
+      // 拼成一条连续窗口再均匀抽：r∈[0, 360) 内，前 60 个落在 23:00~23:59，其余落在次日 0~299 分
+      const span = (1440 - start) + end; // 深夜: 60 + 300 = 360 分钟
+      const rOff = randomInt(0, span - 1);
+      base = rOff < (1440 - start) ? start + rOff : rOff - (1440 - start);
+    } else {
+      // 非跨午夜（如清晨 300~480）：end 是该段的下一整点（08:00），实际可取到 end-1
+      base = randomInt(start, end - 1);
+    }
+    return Math.min(base, 1439);
+  }
+
+  // 一天一摇：按当天日期缓存当日配置，跨天自动重摇。
+  // 用 GM 存储持久化，整页跳转/刷新不会丢；所有标签页共享同一套（真人只有一个行为基线）
+  // 摇出的当日配置：节奏 τ / 定时基准时刻+偏移 / 今日目标（帖/赞在用户设定范围内随机；0=不限）
+  function ensureDailyProfile() {
+    const today = todayKey();
+    if (Storage.get('human_day', '') === today) return;
+    Storage.set('human_day', today);
+    Storage.set('human_tempo', drawDailyTempo());
+    Storage.set('human_sched_base', drawTimeBase());
+    Storage.set('human_sched_offset', drawSchedOffset());
+    const topicLo = Storage.get('human_topic_min', 30);
+    const topicHi = Storage.get('human_topic_max', 50);
+    const likeLo = Storage.get('human_like_min', 10);
+    const likeHi = Storage.get('human_like_max', 20);
+    Storage.set('human_topic_target', drawRangeTarget(topicLo, topicHi));
+    Storage.set('human_like_target', drawRangeTarget(likeLo, likeHi));
+    const t = Storage.get('human_tempo', 1);
+    const base = parseInt(Storage.get('human_sched_base', 1080), 10);
+    const off = parseInt(Storage.get('human_sched_offset', 0), 10);
+    const tt = parseInt(Storage.get('human_topic_target', 0), 10);
+    const lt = parseInt(Storage.get('human_like_target', 0), 10);
+    const hh = String(Math.floor(base / 60)).padStart(2, '0');
+    const mm = String(base % 60).padStart(2, '0');
+    log(`人化模式：今日节奏 ×${t.toFixed(2)}，基准时段 ${hh}:${mm} 偏移 ${off >= 0 ? '+' : ''}${off} 分，目标 ${tt > 0 ? tt : '不限'} 帖 / ${lt > 0 ? lt : '不限'} 赞`);
+  }
+
+  // 人化速度：以「正常」档为基准，按今日节奏 τ 整体缩放，再叠加每帖喜好缩放
+  // （换帖重抽，见 refreshTopicParams）。慢/中/快档位与人化高级设置均被人化接管。
+  function speedValue(key) {
+    if (!humanMode) return SPEED_PRESETS[currentSpeed][key];
+    ensureDailyProfile();
+    const t = Storage.get('human_tempo', 1);
+    const base = SPEED_PRESETS.normal;
+    switch (key) {
+      case 'scrollStep': return clamp(Math.round(base.scrollStep / Math.pow(t, 0.3) * perTopicScrollScale), 250, 650);
+      case 'noNewContentRetry': return clamp(Math.round(base.noNewContentRetry / Math.pow(t, 0.5)), 2, 6);
+      case 'scrollInterval': return Math.round(base.scrollInterval * t * perTopicTimeScale);
+      case 'loadWaitTime': return Math.round(base.loadWaitTime * t * perTopicTimeScale);
+      case 'minReadTime': return Math.round(base.minReadTime * t * perTopicReadScale);
+      case 'maxReadTime': return Math.round(base.maxReadTime * t * perTopicReadScale);
+      default: return Math.round(base[key] * t);
+    }
+  }
+
+  // 人化模式时长上限（分钟）：由 human_duration 定死（0=不限），供 CONFIG.maxMinutes 使用
+  function humanDurationMin() {
+    if (!humanMode) return 0;
+    const d = parseInt(Storage.get('human_duration', 60), 10);
+    return d > 0 ? d : 0;
+  }
+
+  function clamp(v, lo, hi) {
+    return Math.min(hi, Math.max(lo, v));
+  }
+
+  // 人化开关：写入存储并同步面板 UI 状态（隐藏被接管行、显示人化专属设置）
+  function setHumanMode(enabled) {
+    humanMode = !!enabled;
+    Storage.set('human_mode', humanMode);
+    document.querySelectorAll('.human-btn[data-human]').forEach(btn => {
+      btn.classList.remove('active');
+      if ((btn.dataset.human === 'true') === humanMode) btn.classList.add('active');
+    });
+    const statusEl = document.getElementById('human-status');
+    if (statusEl) statusEl.textContent = humanMode ? '已开启（每日随机节奏/时段/目标）' : '未开启';
+    syncPanelHumanVisibility();
+    if (humanMode) ensureDailyProfile();
+    log(`人化随机模式: ${humanMode ? '已开启' : '已关闭'}`);
+  }
+
+  // 人化专属设置：切换所选时段。改了立即生效——今天剩余的基准时刻按新时段重摇，
+  // 不必等到明天才按新时段（定时偏移也一起重摇，避免新时段叠旧偏移出现同一固定组合）
+  function setHumanTimeRange(range) {
+    if (!HUMAN_TIME_RANGES[range]) return;
+    Storage.set('human_time_range', range);
+    document.querySelectorAll('.hr-btn[data-range]').forEach(btn => {
+      btn.classList.remove('active');
+      if (btn.dataset.range === range) btn.classList.add('active');
+    });
+    if (humanMode) {
+      Storage.set('human_sched_base', drawTimeBase());
+      Storage.set('human_sched_offset', drawSchedOffset());
+      const base = parseInt(Storage.get('human_sched_base', 1080), 10);
+      const off = parseInt(Storage.get('human_sched_offset', 0), 10);
+      const hh = String(Math.floor(base / 60)).padStart(2, '0');
+      const mm = String(base % 60).padStart(2, '0');
+      log(`人化时段改为「${HUMAN_TIME_RANGES[range][0]}」，今日基准重摇为 ${hh}:${mm} 偏移 ${off >= 0 ? '+' : ''}${off} 分`);
+    } else {
+      log(`人化时段设为「${HUMAN_TIME_RANGES[range][0]}」（开启人化后生效）`);
+    }
+  }
+
+  // 人化目标范围（帖/赞）：min~max 输入写回；开启人化时重摇当日目标（0 表示不限）
+  function setHumanGoalRange(prefix, minVal, maxVal) {
+    const lo = Math.max(0, Math.floor(Number(minVal) || 0));
+    const hi = Math.max(0, Math.floor(Number(maxVal) || 0));
+    Storage.set(`human_${prefix}_min`, lo);
+    Storage.set(`human_${prefix}_max`, hi);
+    const key = `human_${prefix}_target`;
+    if (humanMode) {
+      Storage.set(key, drawRangeTarget(lo, hi));
+      const t = parseInt(Storage.get(key, 0), 10);
+      log(`人化${prefix === 'topic' ? '浏览' : '点赞'}目标范围改为 ${lo}~${hi}，今日目标重摇为 ${t > 0 ? t : '不限'}`);
+    } else {
+      log(`人化${prefix === 'topic' ? '浏览' : '点赞'}目标范围设为 ${lo}~${hi}（开启人化后生效）`);
+    }
+  }
+
+  // 人化时长上限（定死单值，0=不限）
+  function setHumanDuration(value) {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    Storage.set('human_duration', n);
+    log(`人化时长上限设置为: ${n > 0 ? `${n} 分钟` : '不限'}`);
+  }
+
+  // 面板按人化开关切换：隐藏被接管的设置行（速度档位/定时/目标/高级设置/概率预设），
+  // 显示人化专属设置区（时段+目标范围+时长）；关掉时恢复
+  function syncPanelHumanVisibility() {
+    if (typeof document === 'undefined' || !document.getElementById) return;
+    ['speed', 'schedule', 'goal', 'advanced'].forEach(k => {
+      const el = document.getElementById(`human-hide-${k}`);
+      if (el) el.classList.toggle('hidden', humanMode);
+    });
+    // 概率预设同样被接管（人化下每帖重抽点赞概率），开启人化后隐藏；
+    // 恢复时按点赞开关状态（点赞关闭时概率行本来就不显示）
+    const chanceRow = document.getElementById('like-chance-row');
+    if (chanceRow) chanceRow.classList.toggle('hidden', humanMode || !enableLike);
+    const box = document.getElementById('human-options');
+    if (box) box.classList.toggle('hidden', !humanMode);
   }
 
   function setList(listType) {
@@ -602,6 +893,7 @@
   scheduleEnabled = Storage.get('sched_enabled', false);
   scheduleTime = Storage.get('sched_time', '09:00');
   CONFIG.debug = Storage.get('debug', false);
+  humanMode = Storage.get('human_mode', false);
   loadSelectedCategories();
 
   // 数据迁移：v2.1.1 起 liked_posts 的键从话题内楼层序号改为全局 post id，
@@ -948,6 +1240,10 @@
         return;
       }
 
+      // 【v2.7.0 人化随机】每进入一个新话题就重抽一次「喜好参数」（点赞概率/阅读投入/
+      // 滚动步长/翻页间隔/加载等待），模拟真人各帖喜恶不一的行为起伏
+      refreshTopicParams();
+
       log(`开始浏览话题 ${topicId}...`);
       this.history.markTopicViewed(topicId);
       this.onStatsUpdate?.();
@@ -1186,7 +1482,19 @@
           await humanDelay(1500, 3000);
         }
         await humanDelay(300, 900);
-        const result = await this.sendLikeRequest(actualPostId);
+
+        // 【反检测 v2.7.0】点赞一律走「点击页面真实按钮」：由页面自身 JS 发出带完整
+        // 头部的原生请求，与真人点击产生的网络流量完全一致（机器人直接 fetch 会暴露
+        // 非浏览器指纹的特征）。按钮缺失（罕见）或点击后确认失败才退回 API 兜底。
+        const clicked = await this.clickLikeButton(postElement);
+        let result;
+        if (clicked.success) {
+          result = { success: true };
+        } else if (clicked.rateLimited) {
+          result = { success: false, rateLimited: true };
+        } else {
+          result = await this.sendLikeRequest(actualPostId);
+        }
 
         if (result.success) {
           this.history.markPostLiked(actualPostId);
@@ -1207,6 +1515,44 @@
         return false;
       } catch (e) {
         return false;
+      }
+    }
+
+    // 【v2.7.0 反检测】点击页面真实的反应按钮（而非机器人自己发 fetch）。
+    // 参考 dosss bot_core.py do_like（querySelectorAll('button.btn-toggle-reaction-like')
+    // → filter 掉 has-like/my-likes → target.click()）与 linuxdo-checkin click_like
+    // （.discourse-reactions-reaction-button → click()）：找到按钮后由页面自身 JS
+    // 发出原生请求，网络流量与真人点击完全一致，不暴露 fetch 包装特征。
+    // 返回 { success, rateLimited }；success=false 时由调用方退回 sendLikeRequest 兜底。
+    async clickLikeButton(postElement) {
+      try {
+        const btns = Array.from(postElement.querySelectorAll(
+          'button.btn-toggle-reaction-like, button.discourse-reactions-reaction-button, button[title="点赞此帖子"], button[title="Like this post"]'
+        ));
+        if (!btns.length) return { success: false };
+        // 过滤已赞按钮：按钮自身或最近 .post 容器带 has-like / my-likes / liked class
+        const candidates = btns.filter(btn => {
+          const post = btn.closest('.post');
+          const reactBtn = btn.closest('.discourse-reactions-reaction-button');
+          const s = `${btn.className} ${post ? post.className : ''} ${reactBtn ? reactBtn.className : ''}`;
+          return !/(has-like|my-likes|liked|has-reacted|has-used-main-reaction)/i.test(s);
+        });
+        if (!candidates.length) return { success: false };
+        const btn = candidates[Math.floor(Math.random() * candidates.length)];
+        // 模拟真人：滚动到视野中央 → 悬停 → 点击
+        btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+        await humanDelay(300, 900);
+        btn.click();
+        // 给页面 JS 发请求 + 状态更新留出时间后，校验按钮已进入已赞态（再次点击会取消，
+        // 这是人工确认信号；磁盘点赞记录仍以 history 为准）
+        await new Promise(resolve => setTimeout(resolve, 1200));
+        const postAfter = btn.closest('.post');
+        const reactAfter = btn.closest('.discourse-reactions-reaction-button');
+        const s2 = `${btn.className} ${postAfter ? postAfter.className : ''} ${reactAfter ? reactAfter.className : ''}`;
+        const liked = /(has-like|my-likes|liked|has-reacted|has-used-main-reaction)/i.test(s2);
+        return { success: liked, rateLimited: false };
+      } catch (e) {
+        return { success: false };
       }
     }
 
@@ -1462,11 +1808,13 @@
 
     checkStuck() {
       if (!this.isEnabled) return;
-      // 单次时长上限：跑满设定分钟数就收工（0=不限）
-      if (maxMinutes > 0) {
+      // 单次时长上限：跑满设定分钟数就收工（0=不限）。
+      // 【v2.7.0 人化随机】人化模式下时长由 human_duration 定死接管（用户填的时长上限被隐藏）
+      const limitMin = humanMode ? humanDurationMin() : maxMinutes;
+      if (limitMin > 0) {
         const elapsedMin = (Date.now() - this.startTime) / 60000;
-        if (elapsedMin >= maxMinutes) {
-          log(`达到单次时长上限（${maxMinutes} 分钟），本轮结束`);
+        if (elapsedMin >= limitMin) {
+          log(`达到单次时长上限（${limitMin} 分钟），本轮结束`);
           this.finishRun('超时');
           return;
         }
@@ -1739,6 +2087,30 @@
         #linuxdo-auto-panel .speed-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
         #linuxdo-auto-panel .speed-btn.active { background: #fff; color: #5b3bc4; font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.18); }
 
+        /* 人化随机模式开关：醒目高亮 */
+        #linuxdo-auto-panel .row-human {
+          background: linear-gradient(90deg, rgba(91,59,196,0.22), rgba(91,59,196,0.05));
+          border: 1px solid rgba(91,59,196,0.45); border-radius: 10px; padding: 7px 9px;
+          grid-column: 1 / -1; margin-bottom: 4px;
+        }
+        #linuxdo-auto-panel .row-human .row-label { color: #cfc0ff; font-weight: 600; }
+        #linuxdo-auto-panel .row-human .speed-btn.active { background: #5b3bc4; color: #fff; }
+
+        /* 人化专属设置区（开启人化后才显示） */
+        #linuxdo-auto-panel .row-human-opt {
+          grid-column: 1 / -1;
+          background: linear-gradient(90deg, rgba(91,59,196,0.16), rgba(91,59,196,0.03));
+          border: 1px dashed rgba(91,59,196,0.4); border-radius: 10px;
+          padding: 8px 10px 2px; margin-bottom: 4px;
+        }
+        #linuxdo-auto-panel .row-human-opt-title {
+          grid-column: 1 / -1; font-size: 12px; color: #cfc0ff; font-weight: 600;
+          margin-bottom: 6px; letter-spacing: 1px;
+        }
+        #linuxdo-auto-panel .row-human-opt-line { grid-column: 1 / -1; }
+        #linuxdo-auto-panel .row-human-opt-line:hover { background: rgba(91,59,196,0.08); border-radius: 8px; }
+        #linuxdo-auto-panel .hr-btn.active { background: #5b3bc4; color: #fff; }
+
         /* 楼层限制：数字输入框 + 勾选框 */
         #linuxdo-auto-panel .floor-input {
           flex: 1; min-width: 0; height: 27px; padding: 0 8px;
@@ -1922,7 +2294,39 @@
         </div>
         <div class="panel-content">
           <div class="settings-grid">
-            <div class="row"><span class="row-label">速度</span><div class="seg">
+            <div class="row row-human"><span class="row-label">人化随机</span><div class="seg">
+              <button class="speed-btn human-btn ${humanMode?'active':''}" data-human="true" title="开启后速度/定时/目标/高级设置由人化算法接管，模拟真人（下方被接管项不再显示）">开启</button>
+              <button class="speed-btn human-btn ${!humanMode?'active':''}" data-human="false" title="使用下方手动设置">关闭</button>
+            </div></div>
+            <div class="row-hint">开启后速度档位/具体定时/目标数值/高级设置由人化算法接管（隐藏），下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
+            <div class="row row-human-opt ${humanMode?'':' hidden'}" id="human-options">
+              <div class="row-human-opt-title">人化专属设置（开启后生效）</div>
+              <div class="row row-human-opt-line"><span class="row-label">时段</span><div class="seg">
+                <button class="speed-btn hr-btn ${getHumanTimeRange()==='early'?'active':''}" data-range="early" title="05:00~07:59 内每日随机">清晨</button>
+                <button class="speed-btn hr-btn ${getHumanTimeRange()==='morning'?'active':''}" data-range="morning" title="08:00~11:59 内每日随机">上午</button>
+                <button class="speed-btn hr-btn ${getHumanTimeRange()==='afternoon'?'active':''}" data-range="afternoon" title="12:00~17:59 内每日随机">下午</button>
+                <button class="speed-btn hr-btn ${getHumanTimeRange()==='evening'?'active':''}" data-range="evening" title="18:00~22:59 内每日随机">晚上</button>
+                <button class="speed-btn hr-btn ${getHumanTimeRange()==='night'?'active':''}" data-range="night" title="23:00~04:59 内每日随机">深夜</button>
+              </div></div>
+              <div class="row row-human-opt-line"><span class="row-label">浏览目标</span>
+                <input type="number" class="floor-input target-input" id="human-topic-min" min="0" step="1" value="${Storage.get('human_topic_min', 30)}" title="每天在最小~最大之间随机抽一个浏览目标，0=不限">
+                <span class="goal-unit">~</span>
+                <input type="number" class="floor-input target-input" id="human-topic-max" min="0" step="1" value="${Storage.get('human_topic_max', 50)}" title="每天在最小~最大之间随机抽一个浏览目标，0=不限">
+                <span class="goal-unit">帖</span>
+              </div>
+              <div class="row row-human-opt-line"><span class="row-label">点赞目标</span>
+                <input type="number" class="floor-input target-input" id="human-like-min" min="0" step="1" value="${Storage.get('human_like_min', 10)}" title="每天在最小~最大之间随机抽一个点赞目标，0=不限">
+                <span class="goal-unit">~</span>
+                <input type="number" class="floor-input target-input" id="human-like-max" min="0" step="1" value="${Storage.get('human_like_max', 20)}" title="每天在最小~最大之间随机抽一个点赞目标，0=不限">
+                <span class="goal-unit">赞</span>
+              </div>
+              <div class="row row-human-opt-line"><span class="row-label">时长上限</span>
+                <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
+                <span class="goal-unit">分钟（0=不限）</span>
+              </div>
+              <div class="row-hint">人化模式下每天在设定范围内随机抽取今日目标、在所选时段内随机定时（叠加 ±15分~±8小时偏移）；三项目标全 0 时无法开始</div>
+            </div>
+            <div class="row" id="human-hide-speed"><span class="row-label">速度</span><div class="seg">
               <button class="speed-btn ${currentSpeed==='slow'?'active':''}" data-speed="slow">慢</button>
               <button class="speed-btn ${currentSpeed==='normal'?'active':''}" data-speed="normal">正常</button>
               <button class="speed-btn ${currentSpeed==='fast'?'active':''}" data-speed="fast">快</button>
@@ -1955,14 +2359,14 @@
               </label>
             </div>
             <div class="row-hint">填 N 则每帖读到第 N 楼就换下一帖，留空或 0 表示整帖读完；勾选只计未读则不重复数已读楼层</div>
-            <div class="row"><span class="row-label">定时</span><div class="seg">
+            <div class="row" id="human-hide-schedule"><span class="row-label">定时</span><div class="seg">
               <button class="speed-btn sched-btn ${scheduleEnabled?'active':''}" data-sched="true">开启</button>
               <button class="speed-btn sched-btn ${!scheduleEnabled?'active':''}" data-sched="false">关闭</button>
             </div>
               <input type="time" class="floor-input sched-time" id="sched-time-input" step="60"
                 title="每天到这个时间自动开始新一轮浏览；修改时间即自动开启定时">
             </div>
-            <div class="row row-goal"><span class="row-label">目标</span>
+            <div class="row row-goal" id="human-hide-goal"><span class="row-label">目标</span>
               <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
                 placeholder="0" title="本轮浏览满 N 帖自动停止，0 表示不限">
               <span class="goal-unit">浏览帖数</span>
@@ -1980,6 +2384,7 @@
               </label>
             </div>
           </div>
+          <div id="human-hide-advanced">
           <button class="action-btn btn-advanced" id="btn-advanced">⚙ 高级设置</button>
           <div class="adv-box hidden" id="adv-box">
             <div class="row"><span class="row-label">翻页步长</span><input type="number" class="floor-input adv-input" id="adv-scroll-step" min="200" max="1000" step="50" placeholder="跟随速度(px)"></div>
@@ -1992,6 +2397,7 @@
             <div class="row"><span class="row-label">返回延迟</span><input type="number" class="floor-input adv-input" id="adv-return-delay" min="0" max="8000" step="100" placeholder="默认1000(ms)"></div>
             <div class="row"><span class="row-label">滚动抖动</span><input type="number" class="floor-input adv-input" id="adv-scroll-jitter" min="0" max="300" step="10" placeholder="默认60(px)"></div>
             <div class="row-hint">留空或 0 = 跟随当前速度/概率预设；填数值立即生效并记忆，反检测随机性更强</div>
+          </div>
           </div>
           <button class="action-btn btn-start" id="btn-auto-start">开始自动浏览</button>
           <button class="action-btn btn-stop" id="btn-auto-stop" style="display:none;">停止运行</button>
@@ -2006,6 +2412,7 @@
             <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
             <div class="stats-row"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
+            <div class="stats-row"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
           </div>
         </div>
       `;
@@ -2044,6 +2451,9 @@
         document.querySelectorAll('.chance-btn[data-chance]').forEach(b => b.classList.remove('active'));
         e.target.classList.add('active');
       }));
+      document.querySelectorAll('.human-btn[data-human]').forEach(btn => btn.addEventListener('click', (e) => {
+        setHumanMode(e.target.dataset.human === 'true');
+      }));
 
       const likeMainOnlyCheck = document.getElementById('like-main-only');
       likeMainOnlyCheck.checked = likeMainOnly;
@@ -2081,6 +2491,32 @@
         document.querySelectorAll('.sched-btn[data-sched="true"]').forEach(b => b.classList.add('active'));
         document.querySelectorAll('.sched-btn[data-sched="false"]').forEach(b => b.classList.remove('active'));
         e.target.value = scheduleTime;
+        this.updateSchedStatus();
+      });
+
+      // 人化专属设置：时段按钮 + 目标范围 min~max + 时长上限
+      document.querySelectorAll('.hr-btn[data-range]').forEach(btn => btn.addEventListener('click', (e) => {
+        setHumanTimeRange(e.target.dataset.range);
+      }));
+      const bindHumanRangeInputs = (minId, maxId, prefix, label) => {
+        const minEl = document.getElementById(minId);
+        const maxEl = document.getElementById(maxId);
+        const apply = () => {
+          setHumanGoalRange(prefix, minEl.value, maxEl.value);
+          this.updateSchedStatus();
+        };
+        [minEl, maxEl].forEach(el => {
+          el.addEventListener('keydown', (e) => e.stopPropagation());
+          el.addEventListener('change', apply);
+        });
+      };
+      bindHumanRangeInputs('human-topic-min', 'human-topic-max', 'topic', '浏览');
+      bindHumanRangeInputs('human-like-min', 'human-like-max', 'like', '点赞');
+      const humanDurationInput = document.getElementById('human-duration-input');
+      humanDurationInput.addEventListener('keydown', (e) => e.stopPropagation());
+      humanDurationInput.addEventListener('change', (e) => {
+        setHumanDuration(e.target.value);
+        e.target.value = Number(e.target.value) > 0 ? e.target.value : '';
         this.updateSchedStatus();
       });
 
@@ -2244,13 +2680,15 @@
         const remainEl = document.getElementById('countdown-remain');
         const clockEl = document.getElementById('float-clock');
         if (remainEl) {
-          if (maxMinutes <= 0) {
+          // 【v2.7.0 人化随机】人化模式下倒计时用接管后的时长上限
+          const limitMin = humanMode ? humanDurationMin() : maxMinutes;
+          if (limitMin <= 0) {
             remainEl.textContent = '不限';
           } else if (this.isEnabled && this.startTime) {
-            const remainMs = maxMinutes * 60000 - (Date.now() - this.startTime);
+            const remainMs = limitMin * 60000 - (Date.now() - this.startTime);
             remainEl.textContent = formatRemain(remainMs);
           } else {
-            remainEl.textContent = formatRemain(maxMinutes * 60000);
+            remainEl.textContent = formatRemain(limitMin * 60000);
           }
         }
         if (clockEl) {
@@ -2273,6 +2711,10 @@
       };
       renderCatSummary();
       document.getElementById('btn-cat-picker').addEventListener('click', () => this.openCategoryPicker(renderCatSummary));
+
+      // 按已存的人化开关状态应用面板显隐（隐藏被接管行、显示人化专属设置区）
+      syncPanelHumanVisibility();
+      this.updateSchedStatus();
     }
 
     // 分区选择弹窗：独立覆盖层窗口（不在面板内），列出全部板块供勾选，
@@ -2509,10 +2951,13 @@
       document.getElementById('session-liked').textContent = stats.sessionLiked;
       document.getElementById('session-read-count').textContent = readingTracker.count;
       // 目标进度：刷帖数 = 浏览的话题个数（翻楼/阅读楼层不计入目标）
+      // 【v2.7.0 人化随机】人化模式下进度按今日接管目标（范围随机结果）显示
       const gp = document.getElementById('goal-progress');
       if (gp) {
-        const t = topicTarget > 0 ? `${stats.sessionViewed}/${topicTarget} 帖` : `已刷 ${stats.sessionViewed} 帖`;
-        const l = likeTarget > 0 ? `${stats.sessionLiked}/${likeTarget} 赞` : `已赞 ${stats.sessionLiked}`;
+        const effT = humanMode ? humanTopicTarget() : topicTarget;
+        const effL = humanMode ? humanLikeTarget() : likeTarget;
+        const t = effT > 0 ? `${stats.sessionViewed}/${effT} 帖` : `已刷 ${stats.sessionViewed} 帖`;
+        const l = effL > 0 ? `${stats.sessionLiked}/${effL} 赞` : `已赞 ${stats.sessionLiked}`;
         gp.textContent = `${t} · ${l}`;
       }
       this.updateSchedStatus();
@@ -2548,7 +2993,11 @@
 
     async start(isManual = false, resetSessionFlag = false) {
       // 全部目标都为 0（浏览/点赞/时长全不限）= 无法判定的无限目标：禁止开始，强制至少设一个目标
-      if (topicTarget <= 0 && likeTarget <= 0 && maxMinutes <= 0) {
+      // 【v2.7.0 人化随机】人化模式下用接管后的目标（今日范围内随机 / human_duration 定死）判断
+      const effTopics = humanMode ? humanTopicTarget() : topicTarget;
+      const effLikes = humanMode ? humanLikeTarget() : likeTarget;
+      const effMinutes = humanMode ? humanDurationMin() : maxMinutes;
+      if (effTopics <= 0 && effLikes <= 0 && effMinutes <= 0) {
         const msg = '请至少设置一个目标（浏览帖数/点赞数/时长上限任选其一），全部为 0 时无法开始本轮浏览';
         if (isManual) {
           alert(`⚠️ ${msg}`);
@@ -2642,32 +3091,49 @@
 
     // 到点自动开始新一轮浏览：同一天只触发一次；本页或其他标签页正在运行则跳过
     checkSchedule() {
-      if (!scheduleEnabled) return;
+      // 【v2.7.0 人化随机】人化模式下定时被接管：定时开关行已隐藏，
+      // 视为恒开——每日在所选时段内随机基准时刻触发，不依赖用户是否手动开启过定时
+      if (!scheduleEnabled && !humanMode) return;
       if (this.isEnabled) return;
-      const today = this.todayKey();
-      if (Storage.get('sched_last_run_date', '') === today) return;
+      const todayKey = this.todayKey();
+      if (Storage.get('sched_last_run_date', '') === todayKey) return;
 
       const now = new Date();
-      const [hh, mm] = String(scheduleTime).split(':').map(Number);
+      let targetMin;
+      let schedDesc = scheduleTime;
 
-      // 反检测：实际触发时刻每天在设定时间基础上随机抖动 0~5 分钟（并落盘到当天，
-      // 刷新页面不会重摇）——精确到秒、每天同一瞬间启动是经典定时任务指纹
-      const jitterDay = Storage.get('sched_jitter_day', '');
-      let jitterMin = parseInt(Storage.get('sched_jitter_min', '-1'), 10);
-      if (jitterDay !== today || !(jitterMin >= 0 && jitterMin <= 5)) {
-        jitterMin = randomInt(0, 5);
-        Storage.set('sched_jitter_day', today);
-        Storage.set('sched_jitter_min', jitterMin);
+      if (humanMode) {
+        // 人化模式：定时被人化接管——当天基准时刻在所选时段内随机（human_sched_base），
+        // 再叠加大偏移（human_sched_offset，±15分~±8小时）。不读用户填写的具体时间。
+        ensureDailyProfile();
+        const base = parseInt(Storage.get('human_sched_base', 1080), 10);
+        const off = parseInt(Storage.get('human_sched_offset', 0), 10);
+        targetMin = Math.min(Math.max(base + off, 0), 1439);
+        const bhh = String(Math.floor(base / 60)).padStart(2, '0');
+        const bmm = String(base % 60).padStart(2, '0');
+        schedDesc = `基准 ${bhh}:${bmm} 偏移 ${off >= 0 ? '+' : ''}${off} 分`;
+      } else {
+        // 普通模式：设定时间 + 每天 0~5 分钟均匀抖动（精确到秒、每天同一瞬间启动是定时任务指纹）
+        const [hh, mm] = String(scheduleTime).split(':').map(Number);
+        const jitterDay = Storage.get('sched_jitter_day', '');
+        let jitterMin = parseInt(Storage.get('sched_jitter_min', '-1'), 10);
+        if (jitterDay !== todayKey || !(jitterMin >= 0 && jitterMin <= 5)) {
+          jitterMin = randomInt(0, 5);
+          Storage.set('sched_jitter_day', todayKey);
+          Storage.set('sched_jitter_min', jitterMin);
+        }
+        targetMin = Math.min(Math.max(hh * 60 + mm + jitterMin, 0), 1439);
+        schedDesc = `${scheduleTime} + ${jitterMin} 分抖动`;
       }
-      const targetMin = Math.min(hh * 60 + mm + jitterMin, 1439);
+
       if (now.getHours() * 60 + now.getMinutes() < targetMin) return;
 
       // 其他标签页可能在运行：交给那个页面自然收尾；心跳超过 15 秒视为已失效可接管
       if (Storage.get('auto_running', false) &&
           Date.now() - Storage.get('linuxdo_active_tab_time', 0) < 15000) return;
 
-      Storage.set('sched_last_run_date', today);
-      log(`⏰ 每日定时触发（${scheduleTime} + ${jitterMin} 分抖动），自动开始新一轮浏览`);
+      Storage.set('sched_last_run_date', todayKey);
+      log(`⏰ 每日定时触发（${schedDesc}），自动开始新一轮浏览`);
       this.start(false, true);
     }
 
@@ -2685,12 +3151,26 @@
     updateSchedStatus() {
       const el = document.getElementById('sched-status');
       if (!el) return;
-      const remain = topicTarget > 0 ? topicTarget : '不限';
-      const likes = likeTarget > 0 ? likeTarget : '不限';
-      const minutes = maxMinutes > 0 ? `${maxMinutes} 分` : '不限';
-      el.textContent = scheduleEnabled
-        ? `${scheduleTime} 自动开始 · 目标 ${remain} 帖 / ${likes} 赞 / ${minutes}`
-        : '每日定时关闭';
+      // 【v2.7.0 人化随机】人化模式下显示接管后的今日目标（范围随机结果/定死时长）
+      let display;
+      if (humanMode) {
+        ensureDailyProfile();
+        const tt = humanTopicTarget();
+        const lt = humanLikeTarget();
+        const dm = humanDurationMin();
+        const remain = tt > 0 ? tt : '不限';
+        const likes = lt > 0 ? lt : '不限';
+        const minutes = dm > 0 ? `${dm} 分` : '不限';
+        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / ${minutes}`;
+      } else {
+        const remain = topicTarget > 0 ? topicTarget : '不限';
+        const likes = likeTarget > 0 ? likeTarget : '不限';
+        const minutes = maxMinutes > 0 ? `${maxMinutes} 分` : '不限';
+        display = scheduleEnabled
+          ? `${scheduleTime} 自动开始 · 目标 ${remain} 帖 / ${likes} 赞 / ${minutes}`
+          : '每日定时关闭';
+      }
+      el.textContent = display;
     }
 
     clearHistory() {
