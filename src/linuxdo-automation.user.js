@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.5.0
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持每日定时自动开始与浏览/点赞目标
+// @version      2.6.0
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持每日定时自动开始与浏览/点赞目标；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
 // @author       Assistant
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/liasica/linuxdo/feature/src/linuxdo-automation.user.js
 // @updateURL    https://raw.githubusercontent.com/liasica/linuxdo/feature/src/linuxdo-automation.user.js
 // @grant        GM_setValue
 // @grant        GM_getValue
+// @grant        GM_deleteValue
 // @grant        GM_addStyle
 // @grant        unsafeWindow
 // @run-at       document-idle
@@ -127,24 +128,30 @@
   let likeTarget = 10;
 
   const CONFIG = {
-    // 动态从速度预设获取
-    get scrollStep() { return SPEED_PRESETS[currentSpeed].scrollStep; },
-    get scrollInterval() { return SPEED_PRESETS[currentSpeed].scrollInterval; },
-    get loadWaitTime() { return SPEED_PRESETS[currentSpeed].loadWaitTime; },
-    get minReadTime() { return SPEED_PRESETS[currentSpeed].minReadTime; },
-    get maxReadTime() { return SPEED_PRESETS[currentSpeed].maxReadTime; },
+    // 动态从速度预设获取；高级设置里的数值优先（>0 覆盖预设，0/留空跟随预设）
+    get scrollStep() { return Storage.get('adv_scroll_step', 0) || SPEED_PRESETS[currentSpeed].scrollStep; },
+    get scrollInterval() { return Storage.get('adv_scroll_interval', 0) || SPEED_PRESETS[currentSpeed].scrollInterval; },
+    get loadWaitTime() { return Storage.get('adv_load_wait', 0) || SPEED_PRESETS[currentSpeed].loadWaitTime; },
+    get minReadTime() { return Storage.get('adv_min_read', 0) || SPEED_PRESETS[currentSpeed].minReadTime; },
+    get maxReadTime() { return Storage.get('adv_max_read', 0) || SPEED_PRESETS[currentSpeed].maxReadTime; },
     get noNewContentRetry() { return SPEED_PRESETS[currentSpeed].noNewContentRetry; },
 
-    // 点赞设置（动态从预设获取）
-    get likeChance() { return LIKE_CHANCE_PRESETS[currentLikeChance].value; },
-    minLikeInterval: 2000,        // 最小点赞间隔 (ms)
+    // 点赞设置（动态从预设获取；高级设置百分比 >0 覆盖，上限 50%）
+    get likeChance() {
+      const adv = Storage.get('adv_like_chance', 0);
+      return adv > 0 ? Math.min(50, adv) / 100 : LIKE_CHANCE_PRESETS[currentLikeChance].value;
+    },
+    get minLikeInterval() { return Storage.get('adv_like_interval', 0) || 2000; },  // 最小点赞间隔 (ms)
 
     // 会话设置（动态从目标配置读取，达到即自动停止）
     get maxLikesPerSession() { return likeTarget; },
     get maxTopicsPerSession() { return topicTarget; },
 
-    // 返回列表设置
-    returnToListDelay: 1000,      // 返回列表前延迟 (ms)
+    // 返回列表设置（高级设置可覆盖）
+    get returnToListDelay() { return Storage.get('adv_return_delay', 0) || 1000; },
+
+    // 反检测：滚动步长随机抖动范围 (px)
+    get scrollJitter() { return Storage.get('adv_scroll_jitter', 0) || 60; },
 
     // 时间线「返回」按钮的最长等待时间 (ms)，等不到就留在原地读
     backButtonWaitTime: 2500,
@@ -230,7 +237,18 @@
     scheduleTime = t;
     Storage.set('sched_enabled', scheduleEnabled);
     Storage.set('sched_time', scheduleTime);
+    // 用户重新设置定时后开放新的触发窗口：清掉「今日已运行」标记，
+    // 否则同一天之前触发过的话，新设的时间会被一次/天守卫吞掉，到点不启动
+    Storage.set('sched_last_run_date', '');
     log(`每日定时: ${scheduleEnabled ? `每天 ${scheduleTime} 自动开始浏览` : '已关闭'}`);
+  }
+
+  // 高级设置：数值覆盖速度/点赞预设，0 或留空 = 恢复跟随预设
+  function setAdvanced(key, value) {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    if (n > 0) Storage.set(key, n);
+    else Storage.remove(key);
+    log(`高级设置 ${key}: ${n > 0 ? n : '跟随预设'}`);
   }
 
   // 会话目标设置：浏览满 N 帖或点满 M 赞自动停止，0 表示不限
@@ -365,6 +383,18 @@
         }
       } catch (e) {
         log('存储失败:', e);
+      }
+    }
+
+    static remove(key) {
+      try {
+        if (typeof GM_deleteValue !== 'undefined') {
+          GM_deleteValue(key);
+        } else {
+          localStorage.removeItem(`linuxdo_${key}`);
+        }
+      } catch (e) {
+        /* 忽略删除失败 */
       }
     }
   }
@@ -687,11 +717,17 @@
     }
 
     async scrollDown() {
-      const scrollAmount = CONFIG.scrollStep + randomInt(-30, 30);
-      window.scrollBy({
-        top: scrollAmount,
-        behavior: 'auto'
-      });
+      // 反检测：步长随机抖动 ±scrollJitter，且约 1/3 概率拆成「大步+小步」两次滚动，
+      // 模拟人手动滚动时快慢不一的节奏，避免恒定步长的机械感
+      const jitter = CONFIG.scrollJitter;
+      const amount = CONFIG.scrollStep + randomInt(-jitter, jitter);
+      if (Math.random() < 0.3) {
+        window.scrollBy({ top: Math.round(amount * 0.7), behavior: 'auto' });
+        await randomDelay(120, 350);
+        window.scrollBy({ top: Math.round(amount * 0.3), behavior: 'auto' });
+      } else {
+        window.scrollBy({ top: amount, behavior: 'auto' });
+      }
     }
 
     async scrollToTop() {
@@ -926,7 +962,7 @@
       }
 
       try {
-        await randomDelay(200, 500);
+        await randomDelay(300, 900);  // 反检测：点赞前随机「思考」停顿
         const result = await this.sendLikeRequest(actualPostId);
 
         if (result.success) {
@@ -1296,10 +1332,15 @@
             return;
         }
 
-        log('检测到自动运行状态，3秒后恢复运行...');
+        log('检测到自动运行状态，恢复运行...');
+        // 立即把按钮翻到「停止」态，避免整页跳转后按钮长时间停在「开始」
+        document.getElementById('btn-auto-start').style.display = 'none';
+        document.getElementById('btn-auto-stop').style.display = 'block';
+        document.getElementById('auto-status').textContent = '恢复中...';
+        document.getElementById('status-dot').className = 'status-indicator running';
         setTimeout(() => {
           this.start();
-        }, 3000);
+        }, 800);
       }
       this.updateStats();
     }
@@ -1309,7 +1350,7 @@
       style.textContent = `
         #linuxdo-auto-panel {
           position: fixed; right: 20px; bottom: 20px; z-index: 99999;
-          width: 264px; box-sizing: border-box;
+          width: 500px; max-width: calc(100vw - 40px); box-sizing: border-box;
           background: linear-gradient(160deg, #6d5bf0 0%, #7c4ddb 55%, #8b5cf6 100%);
           border: 1px solid rgba(255,255,255,0.14); border-radius: 16px;
           box-shadow: 0 12px 32px rgba(60,25,120,0.32), 0 2px 8px rgba(0,0,0,0.14);
@@ -1415,6 +1456,21 @@
         /* 目标数字输入：两个并排平分 */
         #linuxdo-auto-panel .target-input { flex: 1 1 0; min-width: 0; }
 
+        /* 双列布局：设置项两列排布，说明文字横跨整行 */
+        #linuxdo-auto-panel .settings-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; }
+        #linuxdo-auto-panel .settings-grid .row-hint { grid-column: 1 / -1; }
+        #linuxdo-auto-panel .settings-grid .row { min-width: 0; }
+
+        /* 高级设置面板：同样两列，边框与上文分隔 */
+        #linuxdo-auto-panel .adv-box {
+          display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px;
+          border-top: 1px solid rgba(255,255,255,0.14); margin: 2px 0 6px; padding-top: 6px;
+        }
+        #linuxdo-auto-panel .adv-box .row-hint { grid-column: 1 / -1; }
+        #linuxdo-auto-panel .btn-advanced {
+          border: 1px solid rgba(255,255,255,0.3); background: rgba(255,255,255,0.1); color: #fff;
+        }
+
         /* 动作按钮 */
         #linuxdo-auto-panel .action-btn {
           width: 100%; margin-top: 8px; padding: 9px; border: 0; border-radius: 10px;
@@ -1459,52 +1515,68 @@
           </button>
         </div>
         <div class="panel-content">
-          <div class="row"><span class="row-label">速度</span><div class="seg">
-            <button class="speed-btn ${currentSpeed==='slow'?'active':''}" data-speed="slow">慢</button>
-            <button class="speed-btn ${currentSpeed==='normal'?'active':''}" data-speed="normal">正常</button>
-            <button class="speed-btn ${currentSpeed==='fast'?'active':''}" data-speed="fast">快</button>
-            <button class="speed-btn ${currentSpeed==='turbo'?'active':''}" data-speed="turbo">极速</button>
-          </div></div>
-          <div class="row"><span class="row-label">列表</span><div class="seg">
-            <button class="speed-btn list-btn ${currentList==='latest'?'active':''}" data-list="latest">最新</button>
-            <button class="speed-btn list-btn ${currentList==='new'?'active':''}" data-list="new">新帖</button>
-            <button class="speed-btn list-btn ${currentList==='unread'?'active':''}" data-list="unread">未读</button>
-          </div></div>
-          <div class="row"><span class="row-label">点赞</span><div class="seg">
-            <button class="speed-btn like-btn ${enableLike?'active':''}" data-like="true">开启</button>
-            <button class="speed-btn like-btn ${!enableLike?'active':''}" data-like="false">关闭</button>
-          </div></div>
-          <div class="row${enableLike?'':' hidden'}" id="like-chance-row"><span class="row-label">概率</span><div class="seg">
-            <button class="speed-btn chance-btn ${currentLikeChance==='low'?'active':''}" data-chance="low" title="约 5% 概率点赞">低</button>
-            <button class="speed-btn chance-btn ${currentLikeChance==='medium'?'active':''}" data-chance="medium" title="约 15% 概率点赞">中</button>
-            <button class="speed-btn chance-btn ${currentLikeChance==='high'?'active':''}" data-chance="high" title="约 25% 概率点赞">高</button>
-            <button class="speed-btn chance-btn ${currentLikeChance==='veryHigh'?'active':''}" data-chance="veryHigh" title="约 40% 概率点赞">极高</button>
-          </div></div>
-          <div class="row"><span class="row-label">楼层</span>
-            <input type="number" class="floor-input" id="floor-limit-input" min="0" step="1"
-              placeholder="不限" title="每帖只浏览前 N 楼后换下一帖，留空或 0 表示不限">
+          <div class="settings-grid">
+            <div class="row"><span class="row-label">速度</span><div class="seg">
+              <button class="speed-btn ${currentSpeed==='slow'?'active':''}" data-speed="slow">慢</button>
+              <button class="speed-btn ${currentSpeed==='normal'?'active':''}" data-speed="normal">正常</button>
+              <button class="speed-btn ${currentSpeed==='fast'?'active':''}" data-speed="fast">快</button>
+              <button class="speed-btn ${currentSpeed==='turbo'?'active':''}" data-speed="turbo">极速</button>
+            </div></div>
+            <div class="row"><span class="row-label">列表</span><div class="seg">
+              <button class="speed-btn list-btn ${currentList==='latest'?'active':''}" data-list="latest">最新</button>
+              <button class="speed-btn list-btn ${currentList==='new'?'active':''}" data-list="new">新帖</button>
+              <button class="speed-btn list-btn ${currentList==='unread'?'active':''}" data-list="unread">未读</button>
+            </div></div>
+            <div class="row"><span class="row-label">点赞</span><div class="seg">
+              <button class="speed-btn like-btn ${enableLike?'active':''}" data-like="true">开启</button>
+              <button class="speed-btn like-btn ${!enableLike?'active':''}" data-like="false">关闭</button>
+            </div></div>
+            <div class="row${enableLike?'':' hidden'}" id="like-chance-row"><span class="row-label">概率</span><div class="seg">
+              <button class="speed-btn chance-btn ${currentLikeChance==='low'?'active':''}" data-chance="low" title="约 5% 概率点赞">低</button>
+              <button class="speed-btn chance-btn ${currentLikeChance==='medium'?'active':''}" data-chance="medium" title="约 15% 概率点赞">中</button>
+              <button class="speed-btn chance-btn ${currentLikeChance==='high'?'active':''}" data-chance="high" title="约 25% 概率点赞">高</button>
+              <button class="speed-btn chance-btn ${currentLikeChance==='veryHigh'?'active':''}" data-chance="veryHigh" title="约 40% 概率点赞">极高</button>
+            </div></div>
+            <div class="row"><span class="row-label">楼层</span>
+              <input type="number" class="floor-input" id="floor-limit-input" min="0" step="1"
+                placeholder="不限" title="每帖只浏览前 N 楼后换下一帖，留空或 0 表示不限">
+            </div>
+            <div class="row"><span class="row-label"></span>
+              <label class="floor-check" title="开启后已读楼层滚过不计数，只数上次阅读位置之后的新楼层">
+                <input type="checkbox" id="floor-unread-only">只计未读楼层
+              </label>
+            </div>
+            <div class="row-hint">填 N 则每帖读到第 N 楼就换下一帖，留空或 0 表示整帖读完；勾选只计未读则不重复数已读楼层</div>
+            <div class="row"><span class="row-label">定时</span><div class="seg">
+              <button class="speed-btn sched-btn ${scheduleEnabled?'active':''}" data-sched="true">开启</button>
+              <button class="speed-btn sched-btn ${!scheduleEnabled?'active':''}" data-sched="false">关闭</button>
+            </div>
+              <input type="time" class="floor-input sched-time" id="sched-time-input" step="60"
+                title="每天到这个时间自动开始新一轮浏览；修改时间即自动开启定时">
+            </div>
+            <div class="row"><span class="row-label">目标</span>
+              <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
+                placeholder="浏览帖数" title="本轮浏览满 N 帖自动停止，0 表示不限">
+              <input type="number" class="floor-input target-input" id="target-likes-input" min="0" step="1"
+                placeholder="点赞数" title="本轮点满 N 个赞自动停止，0 表示不限">
+            </div>
+            <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览或点赞任一达标即自动停止，0 为不限</div>
           </div>
-          <div class="row-hint">填 N 则每帖读到第 N 楼就换下一帖，留空或填 0 表示整帖读完</div>
           <div class="row"><span class="row-label"></span>
-            <label class="floor-check" title="开启后已读楼层滚过不计数，只数上次阅读位置之后的新楼层">
-              <input type="checkbox" id="floor-unread-only">只计未读楼层
-            </label>
+            <button class="action-btn btn-advanced" id="btn-advanced">⚙ 高级设置</button>
           </div>
-          <div class="row-hint">默认按楼层号数到第 N 楼；勾选后从上次读到的位置往后数 N 楼，已读楼层不计入</div>
-          <div class="row"><span class="row-label">定时</span><div class="seg">
-            <button class="speed-btn sched-btn ${scheduleEnabled?'active':''}" data-sched="true">开启</button>
-            <button class="speed-btn sched-btn ${!scheduleEnabled?'active':''}" data-sched="false">关闭</button>
+          <div class="adv-box hidden" id="adv-box">
+            <div class="row"><span class="row-label">翻页步长</span><input type="number" class="floor-input adv-input" id="adv-scroll-step" min="200" max="1000" step="50" placeholder="跟随速度(px)"></div>
+            <div class="row"><span class="row-label">翻页间隔</span><input type="number" class="floor-input adv-input" id="adv-scroll-interval" min="300" max="5000" step="100" placeholder="跟随速度(ms)"></div>
+            <div class="row"><span class="row-label">加载等待</span><input type="number" class="floor-input adv-input" id="adv-load-wait" min="500" max="8000" step="100" placeholder="跟随速度(ms)"></div>
+            <div class="row"><span class="row-label">最短阅读</span><input type="number" class="floor-input adv-input" id="adv-min-read" min="0" max="5000" step="100" placeholder="跟随速度(ms)"></div>
+            <div class="row"><span class="row-label">最长阅读</span><input type="number" class="floor-input adv-input" id="adv-max-read" min="0" max="8000" step="100" placeholder="跟随速度(ms)"></div>
+            <div class="row"><span class="row-label">点赞概率</span><input type="number" class="floor-input adv-input" id="adv-like-chance" min="0" max="50" step="1" placeholder="跟随预设(%)"></div>
+            <div class="row"><span class="row-label">点赞间隔</span><input type="number" class="floor-input adv-input" id="adv-like-interval" min="1000" max="15000" step="500" placeholder="默认2000(ms)"></div>
+            <div class="row"><span class="row-label">返回延迟</span><input type="number" class="floor-input adv-input" id="adv-return-delay" min="0" max="8000" step="100" placeholder="默认1000(ms)"></div>
+            <div class="row"><span class="row-label">滚动抖动</span><input type="number" class="floor-input adv-input" id="adv-scroll-jitter" min="0" max="300" step="10" placeholder="默认60(px)"></div>
+            <div class="row-hint">留空或 0 = 跟随当前速度/概率预设；填数值立即生效并记忆，反检测随机性更强</div>
           </div>
-            <input type="time" class="floor-input sched-time" id="sched-time-input" step="60"
-              title="每天到这个时间自动开始新一轮浏览（同一天只触发一次，错过不补跑）">
-          </div>
-          <div class="row"><span class="row-label">目标</span>
-            <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
-              placeholder="浏览帖数" title="本轮浏览满 N 帖自动停止，0 表示不限">
-            <input type="number" class="floor-input target-input" id="target-likes-input" min="0" step="1"
-              placeholder="点赞数" title="本轮点满 N 个赞自动停止，0 表示不限">
-          </div>
-          <div class="row-hint">到点自动开始；浏览或点赞任一达标即自动停止，0 为不限</div>
           <button class="action-btn btn-start" id="btn-auto-start">开始自动浏览</button>
           <button class="action-btn btn-stop" id="btn-auto-stop" style="display:none;">停止运行</button>
           <button class="action-btn btn-clear" id="btn-clear-history">清除浏览记录</button>
@@ -1513,7 +1585,8 @@
             <div class="stats-row"><span class="stats-label">页面类型</span><span class="stats-value" id="page-type">-</span></div>
             <div class="stats-row"><span class="stats-label">本次帖子/回复</span><span class="stats-value"><span id="session-viewed">0</span> / <span id="session-replies">0</span></span></div>
             <div class="stats-row"><span class="stats-label">本次点赞</span><span class="stats-value" id="session-liked">0</span></div>
-            <div class="stats-row"><span class="stats-label">本次总阅读量</span><span class="stats-value" id="session-read-count">0</span></div>
+            <div class="stats-row"><span class="stats-label">本次阅读楼层</span><span class="stats-value" id="session-read-count">0</span></div>
+            <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
             <div class="stats-row"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
           </div>
         </div>
@@ -1581,7 +1654,10 @@
       schedTimeInput.value = scheduleTime;
       schedTimeInput.addEventListener('keydown', (e) => e.stopPropagation());
       schedTimeInput.addEventListener('change', (e) => {
-        setSchedule(scheduleEnabled, e.target.value);
+        // 改时间即视为要启用定时：避免只改了时间却忘了点「开启」而到点不启动
+        setSchedule(true, e.target.value);
+        document.querySelectorAll('.sched-btn[data-sched="true"]').forEach(b => b.classList.add('active'));
+        document.querySelectorAll('.sched-btn[data-sched="false"]').forEach(b => b.classList.remove('active'));
         e.target.value = scheduleTime;
         this.updateSchedStatus();
       });
@@ -1601,6 +1677,36 @@
       const likesInput = document.getElementById('target-likes-input');
       likesInput.value = likeTarget > 0 ? likeTarget : '';
       bindTargetInput(likesInput, (v) => setTargets(topicTarget, v));
+
+      // 高级设置面板：展开/收起 + 9 项数值输入（0/留空=跟随预设）
+      const btnAdvanced = document.getElementById('btn-advanced');
+      const advBox = document.getElementById('adv-box');
+      btnAdvanced.addEventListener('click', () => {
+        advBox.classList.toggle('hidden');
+      });
+      const ADV_FIELDS = [
+        ['adv-scroll-step', 'adv_scroll_step'],
+        ['adv-scroll-interval', 'adv_scroll_interval'],
+        ['adv-load-wait', 'adv_load_wait'],
+        ['adv-min-read', 'adv_min_read'],
+        ['adv-max-read', 'adv_max_read'],
+        ['adv-like-chance', 'adv_like_chance'],
+        ['adv-like-interval', 'adv_like_interval'],
+        ['adv-return-delay', 'adv_return_delay'],
+        ['adv-scroll-jitter', 'adv_scroll_jitter'],
+      ];
+      ADV_FIELDS.forEach(([id, key]) => {
+        const input = document.getElementById(id);
+        const saved = Storage.get(key, 0);
+        input.value = saved > 0 ? saved : '';
+        input.addEventListener('keydown', (e) => e.stopPropagation());
+        input.addEventListener('change', () => {
+          setAdvanced(key, input.value);
+          const n = Storage.get(key, 0);
+          input.value = n > 0 ? input.value : '';
+          log('高级设置已更新，下一轮浏览生效');
+        });
+      });
 
       document.getElementById('page-type').textContent = getPageType();
     }
@@ -1749,6 +1855,13 @@
       document.getElementById('session-replies').textContent = stats.sessionReplies;
       document.getElementById('session-liked').textContent = stats.sessionLiked;
       document.getElementById('session-read-count').textContent = readingTracker.count;
+      // 目标进度：刷帖数 = 浏览的话题个数（翻楼/阅读楼层不计入目标）
+      const gp = document.getElementById('goal-progress');
+      if (gp) {
+        const t = topicTarget > 0 ? `${stats.sessionViewed}/${topicTarget} 帖` : `已刷 ${stats.sessionViewed} 帖`;
+        const l = likeTarget > 0 ? `${stats.sessionLiked}/${likeTarget} 赞` : `已赞 ${stats.sessionLiked}`;
+        gp.textContent = `${t} · ${l}`;
+      }
       this.updateSchedStatus();
     }
 
