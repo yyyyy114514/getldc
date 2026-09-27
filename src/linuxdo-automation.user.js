@@ -1568,19 +1568,21 @@
         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
         .auto-viewed { opacity: 0.6; }
 
-        /* 半透明信息浮窗：面板统计区的镜像，显示在页面左上角（不挡页面操作） */
+        /* 半透明信息浮窗：面板统计区的镜像，显示在页面左上角（可拖动） */
         #linuxdo-stats-float {
           position: fixed; top: 10px; left: 10px; z-index: 2147483647;
           display: flex; flex-direction: column; gap: 4px;
           padding: 10px 14px; min-width: 170px;
-          background: rgba(16, 12, 34, 0.55);
-          border: 1px solid rgba(255,255,255,0.18);
+          background: rgba(16, 12, 34, 0.30);
+          border: 1px solid rgba(255,255,255,0.14);
           border-radius: 12px;
-          box-shadow: 0 4px 18px rgba(0,0,0,0.25);
-          backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+          box-shadow: 0 4px 14px rgba(0,0,0,0.16);
+          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
           font-size: 12px; line-height: 1.6; color: #fff;
-          pointer-events: none; user-select: none; -webkit-user-select: none;
+          cursor: grab; touch-action: none;
+          user-select: none; -webkit-user-select: none;
         }
+        #linuxdo-stats-float.dragging { cursor: grabbing; }
         #linuxdo-stats-float.hidden { display: none; }
         #linuxdo-stats-float .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 0; white-space: nowrap; }
         #linuxdo-stats-float .stats-label { color: rgba(255,255,255,0.6); margin-right: 14px; }
@@ -1851,6 +1853,63 @@
         statsBlock.style.display = 'none';
         floatBox.classList.remove('hidden');
       }
+
+      // 浮窗可拖动：按住整个浮窗拖到任意位置，松手记住位置（限制在视口内）
+      const floatPos = Storage.get('float_pos', null);
+      if (floatPos && Number.isFinite(floatPos.left) && Number.isFinite(floatPos.top)) {
+        floatBox.style.left = `${Math.round(floatPos.left)}px`;
+        floatBox.style.top = `${Math.round(floatPos.top)}px`;
+      }
+      const clampFloat = () => {
+        if (!floatBox.style.left) return; // 没拖过就保持默认位置
+        const margin = 4;
+        const rect = floatBox.getBoundingClientRect();
+        const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+        const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+        floatBox.style.left = `${Math.round(Math.min(Math.max(rect.left, margin), maxLeft))}px`;
+        floatBox.style.top = `${Math.round(Math.min(Math.max(rect.top, margin), maxTop))}px`;
+      };
+      window.addEventListener('resize', clampFloat);
+      let floatPointerId = null, floatMoved = false;
+      let floatStartX = 0, floatStartY = 0, floatOriginLeft = 0, floatOriginTop = 0;
+      const onFloatMove = (e) => {
+        if (e.pointerId !== floatPointerId) return;
+        const dx = e.clientX - floatStartX;
+        const dy = e.clientY - floatStartY;
+        if (!floatMoved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
+        floatMoved = true;
+        floatBox.classList.add('dragging');
+        floatBox.style.left = `${floatOriginLeft + dx}px`;
+        floatBox.style.top = `${floatOriginTop + dy}px`;
+      };
+      const onFloatUp = (e) => {
+        if (e.pointerId !== floatPointerId) return;
+        try { floatBox.releasePointerCapture(floatPointerId); } catch (err) { /* 忽略 */ }
+        floatPointerId = null;
+        floatBox.classList.remove('dragging');
+        window.removeEventListener('pointermove', onFloatMove);
+        window.removeEventListener('pointerup', onFloatUp);
+        window.removeEventListener('pointercancel', onFloatUp);
+        if (floatMoved) {
+          clampFloat();
+          const rect = floatBox.getBoundingClientRect();
+          Storage.set('float_pos', { left: rect.left, top: rect.top });
+        }
+      };
+      floatBox.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 || floatPointerId !== null) return;
+        const rect = floatBox.getBoundingClientRect();
+        floatOriginLeft = rect.left;
+        floatOriginTop = rect.top;
+        floatStartX = e.clientX;
+        floatStartY = e.clientY;
+        floatMoved = false;
+        floatPointerId = e.pointerId;
+        try { floatBox.setPointerCapture(floatPointerId); } catch (err) { /* 忽略 */ }
+        window.addEventListener('pointermove', onFloatMove);
+        window.addEventListener('pointerup', onFloatUp);
+        window.addEventListener('pointercancel', onFloatUp);
+      });
 
       document.getElementById('page-type').textContent = getPageType();
     }
