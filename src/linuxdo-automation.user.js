@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.0
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标、每帖重抽点赞概率与阅读/滚动节奏，点赞走页面真实按钮
+// @version      2.7.1
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标、每帖重抽点赞概率与阅读/滚动节奏/中途离场，点赞走页面真实按钮（含偶发犹豫）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -354,11 +354,13 @@
 
   // 每帖一摇的喜好参数（内存态，只在本会话内生效；页面刷新/换帖自动重抽）。
   // 真人喜好是多变的：同一篇帖子可能很感兴趣读得久、下一帖划两下就走。
-  // 换帖重抽的维度：点赞概率（4档加权）、阅读投入度、滚动步长、翻页间隔、加载等待。
+  // 换帖重抽的维度：点赞概率（4档加权）、阅读投入度、滚动步长、翻页间隔、加载等待、
+  // 中途离场（约 15% 的帖子不会读完）。
   let perTopicLikeChance = 0.15;   // 当前帖的点赞概率
   let perTopicReadScale = 1;       // 阅读投入度（min/maxReadTime 缩放）
   let perTopicScrollScale = 1;     // 滚动步长缩放
   let perTopicTimeScale = 1;       // 翻页间隔/加载等待 缩放
+  let perTopicGiveUpRatio = 0;     // 中途离场点（0=读完；>0 表示读到该帖该比例楼层即返回）
   function refreshTopicParams() {
     if (!humanMode) return;
     // 点赞概率 4 档加权：低5% 30% / 中15% 40% / 高25% 25% / 极高40% 5%
@@ -367,10 +369,14 @@
     else if (r < 0.70) perTopicLikeChance = 0.15;
     else if (r < 0.95) perTopicLikeChance = 0.25;
     else perTopicLikeChance = 0.40;
-    // 阅读投入度 0.7~1.3；滚动/时间类 0.85~1.15（帖子难易、长短起伏）
-    perTopicReadScale = 0.7 + Math.random() * 0.6;
+    // 阅读投入度：80% 的帖子在 0.7~1.3 之间起伏；约 20% 是「沉浸帖」，
+    // 读到 1.6~2.4 倍时长（遇到感兴趣的长帖会读得明显更久，像真人一样）
+    perTopicReadScale = Math.random() < 0.2 ? 1.6 + Math.random() * 0.8 : 0.7 + Math.random() * 0.6;
+    // 滚动/时间类 0.85~1.15（帖子难易、长短起伏）
     perTopicScrollScale = 0.85 + Math.random() * 0.3;
     perTopicTimeScale = 0.85 + Math.random() * 0.3;
+    // 中途离场：约 15% 的帖子读到 55%~85% 楼层就返回列表（真人很少帖帖读完）
+    perTopicGiveUpRatio = Math.random() < 0.15 ? 0.55 + Math.random() * 0.3 : 0;
   }
 
   // 每日配置的时间段 → 定时基准时刻。真人不会固定同一个点上线，
@@ -411,7 +417,19 @@
     const today = todayKey();
     if (Storage.get('human_day', '') === today) return;
     Storage.set('human_day', today);
-    Storage.set('human_tempo', drawDailyTempo());
+    // 【v2.7.1 人化】节奏 τ 多日自相关：真人浏览节奏有惯性——连续几天大体接近，
+    // 偶尔才大幅变化。60% 概率在昨日 τ 的 ±20% 内扰动，40% 概率全新抽取
+    // （作息被打乱的日子，如周末/出差/熬夜后）。避免「每天从分布里独立重抽」
+    // 造成的白噪声式跳变（那是机器特征，真人不会天天快慢剧烈切换）。
+    const prevTempo = parseFloat(Storage.get('human_tempo_prev', 0)) || 0;
+    let tempo;
+    if (prevTempo > 0 && Math.random() < 0.6) {
+      tempo = clamp(prevTempo * (0.8 + Math.random() * 0.4), 0.35, 2.3);
+    } else {
+      tempo = drawDailyTempo();
+    }
+    Storage.set('human_tempo', tempo);
+    Storage.set('human_tempo_prev', tempo);
     Storage.set('human_sched_base', drawTimeBase());
     Storage.set('human_sched_offset', drawSchedOffset());
     const topicLo = Storage.get('human_topic_min', 30);
@@ -1339,6 +1357,15 @@
             break;
           }
 
+          // 【v2.7.1 人化】随机「中途离场」：约 15% 的帖子读到 55%~85% 楼层就返回
+          // 列表（真人很少帖帖读完，总有一部分帖子点开扫几眼就走）。因信息不足
+          // 无法按比例裁断时（总楼数未知）仍按原逻辑读到尽头，保证目标进度可控。
+          if (perTopicGiveUpRatio > 0 && this.topicTotalPosts > 0 &&
+              this.maxFloorSeen >= Math.round(this.topicTotalPosts * perTopicGiveUpRatio)) {
+            log(`本帖读到 ${this.maxFloorSeen}/${this.topicTotalPosts} 楼后中途离开（${Math.round(perTopicGiveUpRatio * 100)}% 处）`);
+            break;
+          }
+
           if (this.scrollController.isAtBottom()) {
             log('到达页面底部，等待加载新内容...');
             // 反卡顿：不再干等满 loadWaitTime，改为轮询页面高度（约每 1s 一次），
@@ -1542,6 +1569,16 @@
         // 模拟真人：滚动到视野中央 → 悬停 → 点击
         btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
         await humanDelay(300, 900);
+        // 【v2.7.1 人化】「点赞犹豫」：约 30% 概率先滚动离开按钮（像滑走再看一眼
+        // 楼上的内容、或斟酌要不要点），再滑回来完成点击——真人很少一看到按钮就
+        // 立刻机械点下，偶发的「先走再回」是典型的真人手部动作模式
+        if (Math.random() < 0.3) {
+          const away = randomInt(120, 320);
+          window.scrollBy({ top: -away, behavior: 'smooth' });
+          await humanDelay(700, 1600);
+          btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          await humanDelay(400, 900);
+        }
         btn.click();
         // 给页面 JS 发请求 + 状态更新留出时间后，校验按钮已进入已赞态（再次点击会取消，
         // 这是人工确认信号；磁盘点赞记录仍以 history 为准）
