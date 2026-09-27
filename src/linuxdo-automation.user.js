@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.3
+// @version      2.6.4
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持每日定时自动开始与浏览/点赞目标；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -470,6 +470,10 @@
       this.sessionLiked = Storage.get('session_liked', 0);
       this.sessionReplies = Storage.get('session_replies', 0);
       this.totalReplies = Storage.get('total_replies', 0);
+      // 本会话已计入「浏览帖数」的话题集合：会话内去重（同一话题本会话只计一次），
+      // 跨整页跳转持久化、resetSession 时清空。与全局 viewed 历史解耦——之前会话读过的话题
+      // 本会话再读也计入，不再被跨会话持久化的 viewed 集合吞掉计数
+      this.sessionSeenTopics = new Set(Storage.get('session_seen_topics', []));
       // 节流写入的定时器句柄，避免每标记一条就全量序列化落盘
       this.saveTimer = null;
     }
@@ -480,13 +484,21 @@
 
     markTopicViewed(topicId) {
       const id = String(topicId);
+      // 会话级去重：同一话题本会话只计一次，不再受跨会话持久化的 viewed 集合限制。
+      // 全局 viewed 仍照常更新（列表标记/跳过已读话题用），但计数只看本会话首见
+      if (!this.sessionSeenTopics.has(id)) {
+        this.sessionSeenTopics.add(id);
+        trimSet(this.sessionSeenTopics, MAX_HISTORY);
+        this.sessionViewed++;
+        Storage.set('session_viewed', this.sessionViewed);
+        Storage.set('session_seen_topics', [...this.sessionSeenTopics]);
+        this.scheduleSave();
+        log(`标记话题 ${id} 为已浏览，本次会话已浏览 ${this.sessionViewed} 个`);
+      }
       if (!this.viewed.has(id)) {
         this.viewed.add(id);
         trimSet(this.viewed, MAX_HISTORY);
-        this.sessionViewed++;
-        Storage.set('session_viewed', this.sessionViewed);
         this.scheduleSave();
-        log(`标记话题 ${id} 为已浏览，本次会话已浏览 ${this.sessionViewed} 个`);
       }
     }
 
@@ -520,10 +532,12 @@
       this.sessionViewed = 0;
       this.sessionLiked = 0;
       this.sessionReplies = 0;
+      this.sessionSeenTopics.clear();
       Storage.set('session_epoch', this.sessionEpoch);
       Storage.set('session_viewed', 0);
       Storage.set('session_liked', 0);
       Storage.set('session_replies', 0);
+      Storage.set('session_seen_topics', []);
       log('新一轮会话开始（计数已清零）');
     }
 
@@ -1394,6 +1408,18 @@
           this.start();
         }, 800);
       }
+
+      // 手动打开话题页也计入浏览计数：TopicBrowser 只在自动运行时才标记，
+      // 用户自己点开的话题页不经过它，这里补记（自动时 TopicBrowser 的重复调用
+      // 会被 sessionSeenTopics 会话去重吞掉，不会双计）
+      if (getPageType() === 'topic') {
+        const currentTopicId = getCurrentTopicId();
+        if (currentTopicId) {
+          this.history.markTopicViewed(currentTopicId);
+        }
+        // 手动点赞也计入计数：监听页面内帖子反应状态的实时变化
+        this.watchManualLikes();
+      }
       this.updateStats();
     }
 
@@ -2069,6 +2095,34 @@
         gp.textContent = `${t} · ${l}`;
       }
       this.updateSchedStatus();
+    }
+
+    // 手动点赞也计入本次点赞数：用户自己点掉的赞（或取消后重赞）实时反映到会话计数。
+    // 只监听 class 变化（已反应状态由 discourse-reactions 插件加在 .discourse-reactions-actions
+    // 容器上，类名含 reacted），不扫初始状态——避免把历史已点赞的帖子误计为本会话新赞。
+    // 机器人自动点赞走 tryLikePost 成功后 markPostLiked，天然去重，不会与这里重复计数。
+    watchManualLikes() {
+      if (typeof MutationObserver === 'undefined') return;
+      this._manualLikeObserver = new MutationObserver((mutations) => {
+        for (const mutation of mutations) {
+          if (mutation.type !== 'attributes' || mutation.attributeName !== 'class') continue;
+          const target = mutation.target;
+          if (!target || target.nodeType !== 1) continue;
+          const cls = typeof target.className === 'string' ? target.className : '';
+          if (!cls.includes('discourse-reactions-actions') || !/reacted/i.test(cls)) continue;
+          const article = target.closest ? target.closest('article[id^="post_"]') : null;
+          if (!article || !article.dataset || !article.dataset.postId) continue;
+          const actualPostId = article.dataset.postId;
+          if (this.history.isPostLiked(actualPostId)) continue;
+          this.history.markPostLiked(actualPostId);
+          log(`检测到手动点赞帖子 (id=${actualPostId})`);
+        }
+      });
+      this._manualLikeObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: ['class'],
+        subtree: true
+      });
     }
 
     async start(isManual = false, resetSessionFlag = false) {
