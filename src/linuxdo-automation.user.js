@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.0
+// @version      2.6.3
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持每日定时自动开始与浏览/点赞目标；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
-// @author       Assistant
+// @author       yyyy114514
 // @match        https://linux.do/*
-// @downloadURL  https://raw.githubusercontent.com/liasica/linuxdo/feature/src/linuxdo-automation.user.js
-// @updateURL    https://raw.githubusercontent.com/liasica/linuxdo/feature/src/linuxdo-automation.user.js
+// @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
+// @updateURL    https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
 // @grant        GM_setValue
 // @grant        GM_getValue
 // @grant        GM_deleteValue

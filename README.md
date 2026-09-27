@@ -2,6 +2,8 @@
 
 基于 Chrome MCP 研究分析的 Linux.do 论坛自动化浏览工具。
 
+> 本项目由 [https://github.com/xiaowanjiagit/linuxdo](https://github.com/xiaowanjiagit/linuxdo) 修改而来，在原版基础上持续优化与修复。
+
 ## v2.0 新特性
 
 - **无限滚动支持** - 自动滚动加载更多内容
@@ -55,7 +57,7 @@ linuxdo/
 ## 快速开始
 
 1. 安装 [Tampermonkey](https://www.tampermonkey.net/) 浏览器扩展
-2. [**点此一键安装**](https://raw.githubusercontent.com/liasica/linuxdo/feature/src/linuxdo-automation.user.js) —— Tampermonkey 会自动弹出安装确认页（也可手动新建脚本，复制 `src/linuxdo-automation.user.js` 内容）
+2. [**点此一键安装**](https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js) —— Tampermonkey 会自动弹出安装确认页（也可手动新建脚本，复制 `src/linuxdo-automation.user.js` 内容）
 3. 访问 https://linux.do 并登录
 4. 页面右下角会出现紫色悬浮球，点击展开控制面板（拖动可移到任意位置）
 5. 按需设置速度、列表、点赞与楼层限制，点击"开始自动浏览"
