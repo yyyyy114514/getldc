@@ -2096,18 +2096,24 @@
         #linuxdo-auto-panel .row-human .row-label { color: #cfc0ff; font-weight: 600; }
         #linuxdo-auto-panel .row-human .speed-btn.active { background: #5b3bc4; color: #fff; }
 
-        /* 人化专属设置区（开启人化后才显示） */
+        /* 人化专属设置区（开启人化后才显示）：整块纵向堆叠，内部各项各占一行 */
         #linuxdo-auto-panel .row-human-opt {
           grid-column: 1 / -1;
+          display: flex; flex-direction: column; align-items: stretch; gap: 7px;
           background: linear-gradient(90deg, rgba(91,59,196,0.16), rgba(91,59,196,0.03));
           border: 1px dashed rgba(91,59,196,0.4); border-radius: 10px;
-          padding: 8px 10px 2px; margin-bottom: 4px;
+          padding: 10px 10px 6px; margin-bottom: 4px;
         }
         #linuxdo-auto-panel .row-human-opt-title {
-          grid-column: 1 / -1; font-size: 12px; color: #cfc0ff; font-weight: 600;
-          margin-bottom: 6px; letter-spacing: 1px;
+          font-size: 12px; color: #cfc0ff; font-weight: 600;
+          letter-spacing: 1px; margin-bottom: 2px;
         }
-        #linuxdo-auto-panel .row-human-opt-line { grid-column: 1 / -1; }
+        #linuxdo-auto-panel .row-human-opt-line {
+          display: flex; flex-direction: row; align-items: center; gap: 10px;
+          width: 100%; min-width: 0;
+        }
+        /* 人化专属区的行标签（时段/浏览目标/点赞目标/时长上限）比 2 字长，放宽占位 */
+        #linuxdo-auto-panel .row-human-opt-line .row-label { width: auto; min-width: 56px; white-space: nowrap; }
         #linuxdo-auto-panel .row-human-opt-line:hover { background: rgba(91,59,196,0.08); border-radius: 8px; }
         #linuxdo-auto-panel .hr-btn.active { background: #5b3bc4; color: #fff; }
 
