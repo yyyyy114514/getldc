@@ -1,38 +1,6 @@
-# Linux.do 自动浏览助手 v2 2026
-
-基于 Chrome MCP 研究分析的 Linux.do 论坛自动化浏览工具。
+# Linux.do 自动浏览+点赞的油猴插件
 
 > 本项目由 [https://github.com/xiaowanjiagit/linuxdo](https://github.com/xiaowanjiagit/linuxdo) 修改而来，在原版基础上持续优化与修复。
-
-## v2.0 新特性
-
-- **无限滚动支持** - 自动滚动加载更多内容
-- **浏览记录管理** - 已浏览帖子标记，避免重复
-- **完整回复浏览** - 滚动到底部浏览所有回复
-- **自动循环** - 浏览完成后自动返回列表继续下一个
-- **视觉标记** - 已浏览话题显示绿色勾号
-
-## 项目结构
-
-```
-linuxdo/
-├── README.md                              # 项目说明
-├── docs/
-│   ├── linux.do-analysis.md              # 网站结构分析报告
-│   ├── implementation-plan.md            # 实现方案详细文档
-│   └── usage-guide.md                    # 使用指南
-└── src/
-    ├── linuxdo-automation.user.js        # 油猴脚本 (主要功能)
-    ├── hooks/                            # 调试Hook脚本
-    │   ├── xhr-hook.js                   # XHR请求监控
-    │   ├── fetch-hook.js                 # Fetch请求监控
-    │   ├── cookie-hook.js                # Cookie读写监控
-    │   ├── debugger-bypass.js            # 反调试绕过
-    │   └── dom-observer.js               # DOM变化监控
-    └── utils/                            # 工具脚本
-        ├── discourse-api.js              # Discourse API封装
-        └── page-analyzer.js              # 页面分析工具
-```
 
 ## 功能特性
 
@@ -65,168 +33,15 @@ linuxdo/
 
 脚本已声明 `@updateURL`，安装后 Tampermonkey 会自动检查更新；`@name` 不含版本号，升级时直接覆盖安装即可。
 
-### 工作流程
-
-```
-启动 → 判断页面类型
-         ↓
-    ┌────┴────┐
-    ↓         ↓
- 话题列表    帖子详情
-    ↓         ↓
- 滚动加载   标记已浏览
- 找未浏览   滚动看回复
- 点击进入   随机点赞
-    ↓         ↓
-    └────┬────┘
-         ↓
-      循环继续
-```
-
-## 技术说明
-
-### 网站分析
-
-- **论坛系统**: Discourse (开源论坛软件)
-- **认证方式**: Cookie + CSRF Token
-- **API风格**: RESTful JSON API
-- **实时通信**: Message Bus 长轮询
-
-### 关键发现
-
-| 功能 | 实现方式 |
-|------|---------|
-| 点赞 | 调用 discourse-reactions API（`heart/toggle`），已赞检测 `.discourse-reactions-actions` |
-| 帖子识别 | `article[id^="post_"]` |
-| CSRF Token | `meta[name="csrf-token"]` |
-| 登录检测 | 解析 `#data-preloaded`（JSON）中的 `currentUser` |
-
-## 文档索引
-
-- [网站分析报告](docs/linux.do-analysis.md) - 详细的页面结构和API分析
-- [实现方案](docs/implementation-plan.md) - 代码架构和实现细节
-- [使用指南](docs/usage-guide.md) - 安装配置和使用说明
-
-## 注意事项
-
-1. 仅供学习研究使用
-2. 请遵守网站使用条款
-3. 建议使用保守配置避免触发限制
-4. 不得用于商业或恶意目的
-
-## 调试工具使用
-
-项目包含多个调试工具，可在浏览器控制台中使用：
-
-### Hook脚本
-
-```javascript
-// 1. XHR监控 - 监控所有XMLHttpRequest请求
-// 复制 src/hooks/xhr-hook.js 内容到控制台执行
-getXhrLog()      // 查看请求日志
-clearXhrLog()    // 清除日志
-
-// 2. Fetch监控 - 监控所有Fetch API请求
-// 复制 src/hooks/fetch-hook.js 内容到控制台执行
-getFetchLog()    // 查看请求日志
-clearFetchLog()  // 清除日志
-
-// 3. Cookie监控 - 监控Cookie读写
-// 复制 src/hooks/cookie-hook.js 内容到控制台执行
-getCookieLog()   // 查看Cookie操作日志
-parseCookies()   // 解析当前所有Cookie
-
-// 4. DOM监控 - 监控页面DOM变化
-// 复制 src/hooks/dom-observer.js 内容到控制台执行
-startDomObserver('#topic')  // 开始观察指定元素
-stopDomObserver()           // 停止观察
-getDomLog()                 // 查看变化日志
-```
-
-### 工具脚本
-
-```javascript
-// 1. Discourse API工具
-// 复制 src/utils/discourse-api.js 内容到控制台执行
-await discourseAPI.getLatestTopics()     // 获取最新话题
-await discourseAPI.getTopic(123456)      // 获取话题详情
-await discourseAPI.likePost(789)         // 点赞帖子
-await discourseAPI.getCurrentUser()      // 获取当前用户信息
-await discourseAPI.search('关键词')       // 搜索
-
-// 2. 页面分析工具
-// 复制 src/utils/page-analyzer.js 内容到控制台执行
-pageAnalyzer.printReport()       // 打印完整分析报告
-pageAnalyzer.getPageInfo()       // 获取页面基本信息
-pageAnalyzer.analyzeTopicPage()  // 分析帖子页面
-pageAnalyzer.findLikeButtons()   // 查找所有点赞按钮
-pageAnalyzer.getScrollInfo()     // 获取滚动状态
-```
-
-## 开发说明
-
-### 技术栈
-
-- **目标平台**: Discourse 论坛系统
-- **实现方式**: Tampermonkey 用户脚本
-- **API风格**: RESTful JSON
-- **认证方式**: Cookie + CSRF Token
-
-### 关键选择器
-
-| 元素 | 选择器 |
-|------|--------|
-| 点赞按钮 | `button.btn-toggle-reaction-like`（旧版 `button[title="点赞此帖子"]` 已失效）|
-| 帖子容器 | `article[id^="post_"]` |
-| 话题链接 | `a[href*="/t/topic/"]` |
-| 话题行 | `.topic-list-item, tr[data-topic-id]` |
-| CSRF Token | `meta[name="csrf-token"]` |
-| 登录状态 | `#data-preloaded`（含 `currentUser`），回退 `#current-user` |
-
-### 数据存储
-
-脚本使用 localStorage 存储以下数据：
-
-| Key | 说明 |
-|-----|------|
-| `linuxdo_viewed_topics` | 已浏览话题ID列表 (JSON数组) |
-| `linuxdo_liked_posts` | 已点赞帖子ID列表 (JSON数组) |
-| `linuxdo_auto_running` | 自动运行状态 (用于页面跳转后恢复) |
-| `linuxdo_session_read_keys` | 本次总阅读量去重键列表，「话题ID:楼层号」(JSON数组) |
-| `linuxdo_session_read_epoch` | 阅读量清零代次标记 (用于多标签页同步) |
-| `linuxdo_floor_limit` | 每帖浏览楼层上限 (0 表示不限) |
-| `linuxdo_floor_limit_unread_only` | 楼层限制是否只计未读楼层 |
-| `linuxdo_sched_enabled` / `linuxdo_sched_time` | 每日定时开关 / 触发时间 (`HH:MM`) |
-| `linuxdo_topic_target` / `linuxdo_like_target` | 会话目标：浏览帖数 / 点赞数 (0 表示不限) |
-| `linuxdo_like_main_only` | 点赞范围：是否只给主帖（楼主帖）点赞 |
-| `linuxdo_max_minutes` | 单次运行时长上限（分钟，0 表示不限） |
-| `linuxdo_floating_stats` | 信息浮窗开关：面板内不再显示统计信息；勾选后由左上角半透明浮窗显示，取消勾选则任何位置都不显示 |
-| `linuxdo_float_pos` | 信息浮窗位置：拖动后记住的浮窗坐标（`{left, top}`） |
-| `linuxdo_sched_last_run_date` | 定时上次触发日期 (`YYYY-MM-DD`)，同一天只触发一次 |
-| `linuxdo_session_epoch` / `linuxdo_session_viewed` / `linuxdo_session_liked` / `linuxdo_session_replies` | 会话计数（持久化，整页跳转不清零；新一轮开始才重置）|
-| `linuxdo_session_scanned_lists` / `linuxdo_session_scanned_lists_epoch` | 本轮已扫过的话题列表 + 所属会话 epoch（跨整页跳转恢复「扫到哪了」，新会话自动作废）|
-| `linuxdo_auto_finish_reason` | 上一轮自动结束原因（达到目标 / 列表已尽），重启后展示 |
-| `linuxdo_adv_scroll_step` / `linuxdo_adv_scroll_interval` / `linuxdo_adv_load_wait` / `linuxdo_adv_min_read` / `linuxdo_adv_max_read` | 高级设置：翻页步长(px) / 翻页间隔(ms) / 加载等待(ms) / 最短阅读(ms) / 最长阅读(ms)；0 或留空 = 跟随速度预设 |
-| `linuxdo_adv_like_chance` / `linuxdo_adv_like_interval` | 高级设置：点赞概率(%)（上限 50）/ 最小点赞间隔(ms)；0 或留空 = 跟随预设 |
-| `linuxdo_adv_return_delay` / `linuxdo_adv_scroll_jitter` | 高级设置：返回列表延迟(ms) / 滚动抖动(px)；0 或留空 = 默认值 |
-
-### 扩展开发
-
-如需添加新功能，可参考以下步骤：
-
-1. 使用 Hook 脚本分析目标功能的网络请求
-2. 使用页面分析工具定位 DOM 元素
-3. 参考 `discourse-api.js` 封装新的 API 调用
-4. 在主脚本中添加新功能模块
-
-## 已知限制
-
-1. 网站可能更新页面结构，导致选择器失效
-2. 频繁操作可能触发速率限制 (429 错误)
-3. 长时间运行可能被检测为异常行为
-4. 部分功能需要特定用户等级权限
-
 ## 更新日志
+
+### v2.6.7 (2026-09-27)
+- **变更** - 看帖逻辑改为 dosss 同款：**砍掉「列表」选择功能**（未读/新帖/最新列表按钮不再可选），浏览完全由所选分区驱动——启动时若不在所选分区页则自动跳到随机一个所选分区，在分区内按「跳过置顶 → 未读优先 → 同级随机」选帖，读过的帖子跳过
+- **修复** - 目标达成不立即停止（如设置 0 帖/2 赞/0 分，攒够 2 个赞还继续跑）：目标检查改为**每帖读完、每次点赞成功、每次换列表前都即时检查**，达标立即收尾，不再等回到列表页
+- **修复** - 会开置顶帖/已读帖：旧逻辑按 DOM 顺序扫列表，现跳过 `pinned` 置顶帖，优先开带未读徽章的帖子，同级随机排序
+- **修复** - 楼层数虚高（实际 2 楼浮窗却显示 17 楼）：阅读上报解析时过滤掉超过帖子实际总楼数的伪楼层（被删帖留下的编号空洞）；进入帖子时读取实际总楼数，**帖内已读到最高楼立即换帖**，不会白等不存在的楼（如设置读 3 楼但帖子只有 2 楼）
+- **调整** - 目标输入框（浏览帖数/点赞数）占位符由 20/10 改为 0，与时长上限一致：目标为 0（不限）时输入框自动清空、露出灰色「0」，避免误以为默认目标仍是 20 帖 / 10 赞
+- **修复** - 选分区后启动不在所选分区页时不再原地扫全站：自动跳转到随机一个所选分区开始浏览
 
 ### v2.6.6 (2026-09-27)
 - **修复** - 紧急修复 v2.6.5 脚本整体失效（面板与浮窗都不出现）：分区选择的存储读取被错误放在 Storage 类定义之前执行，class 声明不提升导致顶层初始化抛 `ReferenceError: Cannot access 'Storage' before initialization`，脚本初始化即中断。已改为在 Storage 定义完成后统一加载

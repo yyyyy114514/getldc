@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.6
+// @version      2.6.7
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -146,9 +146,14 @@
     return LIST_ORDER.map(key => ({ key, name: LIST_OPTIONS[key].name, path: LIST_OPTIONS[key].path }));
   }
 
-  // 默认跳转目标（兜底/首趟）：分区模式跳到第一个所选分区，否则维持面板当前列表选择
+  // 默认跳转目标（兜底/首趟）：分区模式随机挑一个所选分区（与 dosss 一致，避免每次固定从第一个分区开始），
+  // 否则维持面板当前列表选择
   function getDefaultBrowsePath() {
     const targets = getBrowseTargets();
+    if (isCategoryMode() && targets.length > 1) {
+      const pick = targets[Math.floor(Math.random() * targets.length)];
+      return pick.path;
+    }
     return (targets[0] && targets[0].path) || LIST_OPTIONS[currentList]?.path || '/latest';
   }
 
@@ -157,8 +162,9 @@
   function getCurrentListFromPath() {
     const p = window.location.pathname;
     if (isCategoryMode()) {
-      const target = getBrowseTargets().find(t => t.path === p);
-      return target ? target.key : 'latest';
+      // 分区 URL 可能存在 /c/xxx/N/l/latest 之类的子路径变体，前缀匹配兼容
+      const target = getBrowseTargets().find(t => p === t.path || p.startsWith(t.path + '/'));
+      return target ? target.key : null;
     }
     for (const key of LIST_ORDER) {
       if (LIST_OPTIONS[key].path === p) return key;
@@ -415,6 +421,23 @@
       if (!raw) return 0;
       const topic = typeof raw === 'string' ? JSON.parse(raw) : raw;
       return Number(topic.last_read_post_number) || 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  // 读取当前话题「实际总楼层数」（楼主帖算 1 楼，一条回复 = 一楼）。
+  // 同样取自 #data-preloaded 的 topic 对象：posts_count 含楼主帖；highest_post_number 兜底。
+  // 用真实楼数做硬上限：帖子实际只有 2 楼时，读完 2 楼即收工，
+  // 不再继续滚动等「永远等不到的新楼」，也避免浮窗楼层数虚高
+  function getTopicTotalPosts(topicId) {
+    try {
+      const el = document.querySelector('#data-preloaded');
+      if (!el) return 0;
+      const raw = JSON.parse(el.textContent)[`topic_${topicId}`];
+      if (!raw) return 0;
+      const topic = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return Number(topic.posts_count) || Number(topic.highest_post_number) || 0;
     } catch (e) {
       return 0;
     }
@@ -693,7 +716,13 @@
         for (const [key, value] of params.entries()) {
           // 校验条目格式：楼层号与阅读毫秒数都必须是纯数字，异常条目不计入
           const match = key.match(/^timings\[(\d+)\]$/);
-          if (match && /^\d+$/.test(value)) newKeys.push(`${topicId}:${match[1]}`);
+          if (!match || !/^\d+$/.test(value)) continue;
+          const floor = Number(match[1]);
+          // 楼层上限检查：上报可能包含超出话题实际楼数的伪楼层（如被删帖留下的编号空洞），
+          // 超过实际总楼数的条目直接丢弃，浮窗/统计才不会被虚高楼层误导（实际 2 楼就不会数出 17 楼）
+          const totalPosts = getTopicTotalPosts(topicId);
+          if (totalPosts > 0 && floor > totalPosts) continue;
+          newKeys.push(`${topicId}:${floor}`);
         }
         if (newKeys.length === 0) return;
 
@@ -874,9 +903,11 @@
   // ==================== 帖子详情页浏览器 ====================
 
   class TopicBrowser {
-    constructor(history, onStatsUpdate) {
+    constructor(history, onStatsUpdate, onFinished) {
       this.history = history;
       this.onStatsUpdate = onStatsUpdate;
+      // 目标达成时回调，让主控彻底结束本轮（dosss 式：每帖/每赞后即时查目标）
+      this.onFinished = onFinished;
       this.scrollController = new ScrollController();
       this.isRunning = false;
       this.viewedPosts = new Set();
@@ -885,6 +916,8 @@
       this.floorBaseline = 0;
       this.unreadFloorsRead = 0;
       this.floorLimitReached = false;
+      // 本帖已浏览到的最高楼层号（用于「实际总楼数」硬上限判断）
+      this.maxFloorSeen = 0;
     }
 
     async start() {
@@ -902,6 +935,12 @@
       this.history.markTopicViewed(topicId);
       this.onStatsUpdate?.();
 
+      // 该帖实际总楼层数：用作滚动/等待的硬上限，帖子只有 2 楼就不会白等到「不存在的第 3 楼」
+      this.topicTotalPosts = getTopicTotalPosts(topicId);
+      if (this.topicTotalPosts > 0) {
+        log(`话题共 ${this.topicTotalPosts} 楼${floorLimit > 0 && this.topicTotalPosts < floorLimit ? `（小于楼层上限 ${floorLimit}，读完即换帖）` : ''}`);
+      }
+
       // 进入时先取已读位置快照：它既是「只计未读」的计数起点，也用来判断该续读还是从头读
       this.floorBaseline = getLastReadPostNumber(topicId);
       this.unreadFloorsRead = 0;
@@ -918,6 +957,13 @@
       await this.browseAllReplies();
 
       if (this.isRunning) {
+        // dosss 式：每帖浏览完即时查目标，达标直接收工，不再返回列表
+        if (!this.history.canContinue()) {
+          log('全部目标达成，本轮结束');
+          this.stop();
+          this.onFinished?.('全部目标达成');
+          return;
+        }
         await this.returnToList();
       }
     }
@@ -973,6 +1019,13 @@
 
           if (this.floorLimitReached) break;
 
+          // 帖子实际楼层数硬上限：已知总楼数且已读到最高楼 → 立即收工，
+          // 不再滚动等「永远等不到的新楼」（如设置 3 楼但帖子只有 2 楼）
+          if (this.topicTotalPosts > 0 && this.maxFloorSeen >= this.topicTotalPosts) {
+            log(`已读完全部 ${this.topicTotalPosts} 楼，提前结束本帖`);
+            break;
+          }
+
           if (this.scrollController.isAtBottom()) {
             log('到达页面底部，等待加载新内容...');
             // 反卡顿：不再干等满 loadWaitTime，改为轮询页面高度（约每 1s 一次），
@@ -1023,6 +1076,7 @@
 
           this.viewedPosts.add(postId);
           newPostFound = true;
+          if (floor > this.maxFloorSeen) this.maxFloorSeen = floor;
           if (floor > this.floorBaseline) this.unreadFloorsRead++;
           this.history.addReplyViewed();
           this.onStatsUpdate?.();
@@ -1092,6 +1146,12 @@
           this.lastLikeTime = Date.now();
           this.onStatsUpdate?.();
           log(`点赞帖子 #${postId} (id=${actualPostId})`);
+          // dosss 式：点赞后即时查目标，赞满立即收工，不再继续爬楼/返回列表
+          if (!this.history.canContinue()) {
+            log('全部目标达成，本轮结束');
+            this.stop();
+            this.onFinished?.('全部目标达成');
+          }
           return true;
         } else if (result.rateLimited) {
           handleLikeLimit();
@@ -1197,14 +1257,28 @@
       log('停止列表浏览');
     }
 
+    // dosss 式选帖：收集本页全部话题 → 跳过置顶与已浏览 → 未读优先、同级随机 → 进入
     async findAndEnterUnviewedTopic() {
+      // 目标即时检查（dosss 式：进任何话题前先查目标，达标直接收工）
+      if (!this.history.canContinue()) {
+        log('全部目标达成，本轮结束');
+        this.stop();
+        this.onFinished?.('全部目标达成');
+        return false;
+      }
+
       const topicRows = document.querySelectorAll('.topic-list-item, tr[data-topic-id], .topic-list tr');
+      const candidates = [];
 
       for (const row of topicRows) {
         if (!this.isRunning) return false;
 
+        // 跳过置顶帖（dosss 同款判定：行或标题链接带 pinned 类）
+        if (row.classList.contains('pinned')) continue;
+
         const titleLink = row.querySelector('.title a[href*="/t/topic/"], .link-top-line a[href*="/t/topic/"], a.title[href*="/t/topic/"]');
         if (!titleLink) continue;
+        if (titleLink.classList.contains('pinned')) continue;
 
         const topicId = getTopicIdFromUrl(titleLink.href);
         if (!topicId) continue;
@@ -1217,25 +1291,30 @@
           continue;
         }
 
-        if (!this.history.canContinue()) {
-          log('全部目标达成，本轮结束');
-          this.stop();
-          this.onFinished?.('全部目标达成');
-          return false;
-        }
-
-        titleLink.scrollIntoView({ behavior: 'auto', block: 'center' });
-        await randomDelay(300, 600);
-
-        log(`进入话题: ${topicId}`);
-        // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
-        Storage.set('session_return_path', window.location.pathname);
-        // 直接改 location 强制当前页跳转（不点击链接，因此无需理会其 target 属性）
-        window.location.href = titleLink.href;
-        return true;
+        // 未读徽章判定（dosss 同款：.badge.badge-notification.new-topic）
+        const unread = !!row.querySelector('.badge.badge-notification.new-topic');
+        candidates.push({ row, titleLink, topicId, unread });
       }
 
-      return false;
+      if (candidates.length === 0) return false;
+
+      // 未读优先、同级随机：先乱序，再按未读做稳定排序（同未读状态保持乱序后的随机次序）
+      for (let i = candidates.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+      }
+      candidates.sort((a, b) => Number(b.unread) - Number(a.unread));
+
+      const pick = candidates[0];
+      pick.titleLink.scrollIntoView({ behavior: 'auto', block: 'center' });
+      await randomDelay(300, 600);
+
+      log(`进入话题: ${pick.topicId}${pick.unread ? '（未读）' : ''}`);
+      // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
+      Storage.set('session_return_path', window.location.pathname);
+      // 直接改 location 强制当前页跳转（不点击链接，因此无需理会其 target 属性）
+      window.location.href = pick.titleLink.href;
+      return true;
     }
 
     markAsViewed(row) {
@@ -1253,8 +1332,15 @@
       }
     }
 
-    // 当前浏览目标扫完且无新内容：换下一个目标（未读→新帖→最新，或已选分区间轮换），全部扫过即本轮结束
+    // 当前浏览目标扫完且无新内容：换下一个目标（已选分区间轮换，或未读→新帖→最新），全部扫过即本轮结束
     async switchToAnotherList() {
+      // 目标达成时不再换列表（dosss 式：换分区前先查目标）
+      if (!this.history.canContinue()) {
+        log('全部目标达成，本轮结束');
+        this.stop();
+        this.onFinished?.('全部目标达成');
+        return;
+      }
       const targets = getBrowseTargets();
       const next = targets.find(t => !this.scannedLists.has(t.key));
       if (!next) {
@@ -1326,9 +1412,19 @@
         this.heartbeat();
       };
       if (pageType === 'topic') {
-        this.topicBrowser = new TopicBrowser(this.history, onUpdate);
+        this.topicBrowser = new TopicBrowser(this.history, onUpdate, (reason) => this.finishRun(reason));
         await this.topicBrowser.start();
       } else if (pageType === 'list') {
+        // 分区模式下必须在所选分区页内找帖：当前页不是所选分区（如还停在 /latest）时，
+        // 先跳到第一个所选分区页，否则会在全站列表里找帖，分区选择形同虚设
+        if (isCategoryMode()) {
+          const p = window.location.pathname;
+          const onSelected = getBrowseTargets().some(t => p === t.path || p.startsWith(t.path + '/'));
+          if (!onSelected) {
+            window.location.href = getDefaultBrowsePath();
+            return;
+          }
+        }
         this.listBrowser = new TopicListBrowser(this.history, onUpdate, (reason) => this.finishRun(reason));
         await this.listBrowser.start();
       } else {
@@ -1757,16 +1853,11 @@
               <button class="speed-btn ${currentSpeed==='fast'?'active':''}" data-speed="fast">快</button>
               <button class="speed-btn ${currentSpeed==='turbo'?'active':''}" data-speed="turbo">极速</button>
             </div></div>
-            <div class="row"><span class="row-label">列表</span><div class="seg">
-              <button class="speed-btn list-btn ${currentList==='latest'?'active':''}" data-list="latest">最新</button>
-              <button class="speed-btn list-btn ${currentList==='new'?'active':''}" data-list="new">新帖</button>
-              <button class="speed-btn list-btn ${currentList==='unread'?'active':''}" data-list="unread">未读</button>
-            </div></div>
             <div class="row"><span class="row-label">分区</span>
               <button class="speed-btn cat-btn" id="btn-cat-picker" title="弹窗选择只浏览哪些分区，内容较多故不在面板里显示">选分区…</button>
               <span class="cat-summary" id="cat-summary"></span>
             </div>
-            <div class="row-hint">勾选分区后只轮换浏览所选分区；不限分区 = 按上方列表（未读/新帖/最新）全站轮换</div>
+            <div class="row-hint">勾选分区后只轮换浏览所选分区；不限分区 = 按未读/新帖/最新全站轮换</div>
             <div class="row"><span class="row-label">点赞</span><div class="seg">
               <button class="speed-btn like-btn ${enableLike?'active':''}" data-like="true">开启</button>
               <button class="speed-btn like-btn ${!enableLike?'active':''}" data-like="false">关闭</button>
@@ -1798,10 +1889,10 @@
             </div>
             <div class="row row-goal"><span class="row-label">目标</span>
               <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
-                placeholder="20" title="本轮浏览满 N 帖自动停止，0 表示不限">
+                placeholder="0" title="本轮浏览满 N 帖自动停止，0 表示不限">
               <span class="goal-unit">浏览帖数</span>
               <input type="number" class="floor-input target-input" id="target-likes-input" min="0" step="1"
-                placeholder="10" title="本轮点满 N 个赞自动停止，0 表示不限">
+                placeholder="0" title="本轮点满 N 个赞自动停止，0 表示不限">
               <span class="goal-unit">点赞数</span>
               <input type="number" class="floor-input target-input" id="max-minutes-input" min="0" step="1"
                 placeholder="0" title="本轮最多运行 N 分钟自动停止，0 表示不限">
@@ -1918,22 +2009,22 @@
         this.updateSchedStatus();
       });
 
-      // 会话目标：浏览帖数 / 点赞数（0 = 不限）
-      const bindTargetInput = (input, applyTargets) => {
+      // 会话目标：浏览帖数 / 点赞数（0 = 不限，留空或输入 0 后显示空、露出 placeholder「0」）
+      const bindTargetInput = (input, applyTargets, getTarget) => {
         input.addEventListener('keydown', (e) => e.stopPropagation());
         input.addEventListener('change', (e) => {
           applyTargets(e.target.value);
-          // 输入 0（不限）后固定显示 0，避免清空输入框露出灰色占位符「20」造成误会
-          e.target.value = (input === topicsInput) ? String(topicTarget) : String(likeTarget);
+          // 与时长上限一致：目标为 0（不限）时清空输入框，露出灰色 placeholder「0」
+          e.target.value = getTarget() > 0 ? String(getTarget()) : '';
           this.updateSchedStatus();
         });
       };
       const topicsInput = document.getElementById('target-topics-input');
-      topicsInput.value = String(topicTarget);
-      bindTargetInput(topicsInput, (v) => setTargets(v, likeTarget));
+      topicsInput.value = topicTarget > 0 ? String(topicTarget) : '';
+      bindTargetInput(topicsInput, (v) => setTargets(v, likeTarget), () => topicTarget);
       const likesInput = document.getElementById('target-likes-input');
-      likesInput.value = String(likeTarget);
-      bindTargetInput(likesInput, (v) => setTargets(topicTarget, v));
+      likesInput.value = likeTarget > 0 ? String(likeTarget) : '';
+      bindTargetInput(likesInput, (v) => setTargets(topicTarget, v), () => likeTarget);
 
       // 单次运行时长上限（分钟）
       const maxMinutesInput = document.getElementById('max-minutes-input');
