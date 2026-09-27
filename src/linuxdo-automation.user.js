@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.7
+// @version      2.6.8
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -331,6 +331,7 @@
     // 用户重新设置定时后开放新的触发窗口：清掉「今日已运行」标记，
     // 否则同一天之前触发过的话，新设的时间会被一次/天守卫吞掉，到点不启动
     Storage.set('sched_last_run_date', '');
+    Storage.set('sched_jitter_day', '');
     log(`每日定时: ${scheduleEnabled ? `每天 ${scheduleTime} 自动开始浏览` : '已关闭'}`);
   }
 
@@ -362,6 +363,46 @@
   function randomDelay(min, max) {
     const delay = Math.floor(Math.random() * (max - min + 1)) + min;
     return new Promise(resolve => setTimeout(resolve, delay));
+  }
+
+  // 人化延迟：对均匀基准施加偏态扰动——真实人类的行为时间不是均匀分布，
+  // 而是「大多数偏短、偶发明显偏慢」的偏态分布。直接均匀采样会在长时间序列
+  // 的统计特征里暴露为机器人（每个间隔都落在固定区间的均匀带里）。
+  // 从 [min,max] 均匀取基准后按概率拉伸/压缩：
+  //   ~12% 快速掠过（0.45~0.8×）  ~15% 略快（0.75~1.0×）
+  //   ~13% 略慢（1.3~1.8×）       ~5% 明显偏慢「分心/重读」（2.2~4×）
+  // 均值仍大致落在原区间内，不拖慢整体节奏，但分布形态接近人类。
+  function skewDelay(baseMs) {
+    const r = Math.random();
+    let d = baseMs;
+    if (r < 0.05) d = Math.round(baseMs * (2.2 + Math.random() * 1.8));
+    else if (r < 0.18) d = Math.round(baseMs * (1.3 + Math.random() * 0.5));
+    else if (r < 0.33) d = Math.round(baseMs * (0.75 + Math.random() * 0.25));
+    else if (r < 0.45) d = Math.round(baseMs * (0.45 + Math.random() * 0.35));
+    return d;
+  }
+
+  // 人化延迟（区间版）：随机取基准再施加偏态
+  // 上限钳制 15s：既低于卡死判定阈值（30s），又是真人「认真读完长帖」的合理停顿
+  function humanDelay(min, max) {
+    const base = Math.floor(Math.random() * (max - min + 1)) + min;
+    const d = Math.min(skewDelay(base), 15000);
+    return new Promise(resolve => setTimeout(resolve, d));
+  }
+
+  // 按帖子正文长度估算人类阅读时间：短楼（一句话/表情）快速掠过，
+  // 长帖按长度加时（最多到最长阅读时间的 2 倍）。这些停留时长会写入
+  // /topics/timings 上报，让服务端看到的阅读速度与内容量相关（像真人）。
+  function contentReadDelay(textLen) {
+    const min = CONFIG.minReadTime;
+    const max = CONFIG.maxReadTime;
+    if (textLen < 40) {
+      return Math.round(min * (0.3 + Math.random() * 0.3));  // 一句话楼：快速划过
+    }
+    const f = Math.min(1, textLen / 500);                    // 500 字内线性读满 min~max
+    let d = min + (max - min) * f;
+    if (textLen > 1500) d *= 1.3;                            // 长帖额外加时
+    return Math.round(Math.min(d, max * 2));
   }
 
   function randomInt(min, max) {
@@ -851,12 +892,17 @@
     }
 
     async scrollDown() {
-      // 反卡顿+反检测：整段位移拆成 2~4 段小步连续滚动（段间 90-220ms 随机停顿），
-      // 视觉上是「连续匀速下滑」而不是「一跳一跳」；步长仍带 ±scrollJitter 抖动
+      // 反卡顿+反检测：滚动不是恒定 2~4 段等分——真实读者是混合节奏：
+      // 偶尔一滚到底（1 段大位移）、偶尔 5~7 碎步、多数时候 2~4 段；
+      // 段间停顿也施加偏态扰动（人类手指不会精确均匀地停 90~220ms）。
       const jitter = CONFIG.scrollJitter;
       const total = CONFIG.scrollStep + randomInt(-jitter, jitter);
       if (total <= 0) return;
-      const steps = randomInt(2, 4);
+      const r = Math.random();
+      let steps;
+      if (r < 0.15) steps = 1;               // 偶发：一滚到底
+      else if (r < 0.30) steps = randomInt(5, 7); // 偶发：碎步慢滚
+      else steps = randomInt(2, 4);
       let done = 0;
       for (let i = 0; i < steps && done < total; i++) {
         const remaining = total - done;
@@ -865,13 +911,13 @@
         if (seg <= 0) break;
         window.scrollBy({ top: seg, behavior: 'auto' });
         done += seg;
-        if (i < steps - 1) await randomDelay(90, 220);
+        if (i < steps - 1) await humanDelay(90, 220);
       }
     }
 
     async scrollToTop() {
       window.scrollTo({ top: 0, behavior: 'auto' });
-      await randomDelay(200, 400);
+      await humanDelay(200, 400);
     }
 
     hasNewContent() {
@@ -985,12 +1031,12 @@
       const jumpToFirstBtn = document.querySelector('a[href*="/1"][title*="第一"], a[href*="/1"][title*="first" i], a.jump-to-first');
       if (jumpToFirstBtn) {
         jumpToFirstBtn.click();
-        await randomDelay(1500, 2000);
+        await humanDelay(1500, 2000);
         return;
       }
 
       window.location.href = firstPostPath;
-      await randomDelay(2000, 2500);
+      await humanDelay(2000, 2500);
     }
 
     // 时间线上出现「返回」就点它，跳回上次读到的楼层继续。
@@ -1005,7 +1051,7 @@
 
       log(`点击时间线「返回」，回到第 ${this.floorBaseline} 楼继续阅读`);
       btn.click();
-      await randomDelay(CONFIG.loadWaitTime, CONFIG.loadWaitTime * 1.3);
+      await humanDelay(CONFIG.loadWaitTime, CONFIG.loadWaitTime * 1.3);
       return true;
     }
 
@@ -1044,7 +1090,18 @@
           }
 
           await this.scrollController.scrollDown();
-          await randomDelay(CONFIG.scrollInterval, CONFIG.scrollInterval * 1.3);
+
+          // 偶发「回看」：真实读者偶尔会小幅上滚重读一小段（重读迹象），
+          // 短暂停滞后滚回原位继续往下读；纯滚动上滑不会触发楼层重复处理（viewedPosts 去重）
+          if (Math.random() < 0.08) {
+            const back = randomInt(40, 140);
+            window.scrollBy({ top: -back, behavior: 'auto' });
+            await humanDelay(500, 1200);
+            window.scrollBy({ top: back, behavior: 'auto' });
+            await humanDelay(300, 700);
+          }
+
+          await humanDelay(CONFIG.scrollInterval, CONFIG.scrollInterval * 1.3);
         } catch (error) {
           log('浏览回复出错:', error.message);
           await randomDelay(2000, 3000);
@@ -1082,7 +1139,12 @@
           this.onStatsUpdate?.();
 
           if (CONFIG.minReadTime > 0) {
-            await randomDelay(CONFIG.minReadTime, CONFIG.maxReadTime);
+            // 阅读停留按楼层正文长度估算（并施加偏态扰动），写入 /topics/timings 的
+            // 时长与内容量挂钩，服务端看到的是「人在读帖」而非恒定均匀节奏
+            const cooked = post.querySelector('.cooked');
+            const textLen = cooked ? cooked.textContent.trim().length : 0;
+            const base = contentReadDelay(textLen);
+            await humanDelay(base, Math.round(base * 1.3) + 1);
           }
 
           if (this.shouldLike(post)) {
@@ -1138,7 +1200,12 @@
       }
 
       try {
-        await randomDelay(300, 900);  // 反检测：点赞前随机「思考」停顿
+        // 反检测：点赞前「思考」停顿换成偏态人化延迟，并偶发（约 10%）一次明显的
+        // 「犹豫/重新考虑」长停顿——真人在点开赞前常会悬停考虑一下
+        if (Math.random() < 0.10) {
+          await humanDelay(1500, 3000);
+        }
+        await humanDelay(300, 900);
         const result = await this.sendLikeRequest(actualPostId);
 
         if (result.success) {
@@ -1190,7 +1257,12 @@
 
     async returnToList() {
       log('准备返回话题列表...');
-      await randomDelay(CONFIG.returnToListDelay, CONFIG.returnToListDelay * 1.5);
+      // 反检测：离帖前偶发「读完最后一段再走」的逗留（约 15% 概率多停 2~4s），
+      // 避免每次都精确等上固定延迟就立刻跳走，暴露机械节奏
+      if (Math.random() < 0.15) {
+        await humanDelay(2000, 4000);
+      }
+      await humanDelay(CONFIG.returnToListDelay, CONFIG.returnToListDelay * 1.5);
       // 回到进入话题前的浏览目标（分区页或全站列表）：列表浏览器跳转前已把来源路径存进 Storage
       const returnUrl = Storage.get('session_return_path', '') || getDefaultBrowsePath();
       window.location.href = returnUrl;
@@ -1234,7 +1306,7 @@
           this.onStatsUpdate?.();
 
           if (this.scrollController.isAtBottom()) {
-            await randomDelay(CONFIG.loadWaitTime, CONFIG.loadWaitTime * 1.2);
+            await humanDelay(CONFIG.loadWaitTime, CONFIG.loadWaitTime * 1.2);
             if (!this.scrollController.hasNewContent()) {
               if (this.scrollController.isContentFullyLoaded()) {
                 await this.switchToAnotherList();
@@ -1244,10 +1316,10 @@
           }
 
           await this.scrollController.scrollDown();
-          await randomDelay(CONFIG.scrollInterval, CONFIG.scrollInterval * 1.2);
+          await humanDelay(CONFIG.scrollInterval, CONFIG.scrollInterval * 1.2);
           found = await this.findAndEnterUnviewedTopic();
         } catch (error) {
-          await randomDelay(2000, 3000);
+          await humanDelay(2000, 3000);
         }
       }
     }
@@ -1307,7 +1379,7 @@
 
       const pick = candidates[0];
       pick.titleLink.scrollIntoView({ behavior: 'auto', block: 'center' });
-      await randomDelay(300, 600);
+      await humanDelay(300, 600);
 
       log(`进入话题: ${pick.topicId}${pick.unread ? '（未读）' : ''}`);
       // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
@@ -1354,7 +1426,7 @@
       Storage.set('session_scanned_lists', [...this.scannedLists]);
       Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
       log(`切换到列表: ${next.name}`);
-      await randomDelay(1000, 2000);
+      await humanDelay(1000, 2000);
       window.location.href = next.path;
     }
   }
@@ -1440,7 +1512,7 @@
       try {
         await this.runBrowserFor(getPageType());
       } catch (error) {
-        await randomDelay(3000, 5000);
+        await humanDelay(3000, 5000);
         window.location.href = getDefaultBrowsePath();
       }
     }
@@ -1498,13 +1570,13 @@
     async handlePageTypeChange(newPageType) {
       this.topicBrowser?.stop();
       this.listBrowser?.stop();
-      await randomDelay(1000, 1500);
+      await humanDelay(1000, 1500);
       this.heartbeat();
 
       try {
         await this.runBrowserFor(newPageType);
       } catch (error) {
-        await randomDelay(2000, 3000);
+        await humanDelay(2000, 3000);
         this.restartBrowsing();
       }
     }
@@ -2520,7 +2592,7 @@
       } catch (error) {
         if (this.isEnabled) {
           document.getElementById('auto-status').textContent = '出错，重试中...';
-          await randomDelay(5000, 8000);
+          await humanDelay(5000, 8000);
           if (this.isEnabled) this.restartBrowsing();
         }
       }
@@ -2574,14 +2646,25 @@
 
       const now = new Date();
       const [hh, mm] = String(scheduleTime).split(':').map(Number);
-      if (now.getHours() < hh || (now.getHours() === hh && now.getMinutes() < mm)) return;
+
+      // 反检测：实际触发时刻每天在设定时间基础上随机抖动 0~5 分钟（并落盘到当天，
+      // 刷新页面不会重摇）——精确到秒、每天同一瞬间启动是经典定时任务指纹
+      const jitterDay = Storage.get('sched_jitter_day', '');
+      let jitterMin = parseInt(Storage.get('sched_jitter_min', '-1'), 10);
+      if (jitterDay !== today || !(jitterMin >= 0 && jitterMin <= 5)) {
+        jitterMin = randomInt(0, 5);
+        Storage.set('sched_jitter_day', today);
+        Storage.set('sched_jitter_min', jitterMin);
+      }
+      const targetMin = Math.min(hh * 60 + mm + jitterMin, 1439);
+      if (now.getHours() * 60 + now.getMinutes() < targetMin) return;
 
       // 其他标签页可能在运行：交给那个页面自然收尾；心跳超过 15 秒视为已失效可接管
       if (Storage.get('auto_running', false) &&
           Date.now() - Storage.get('linuxdo_active_tab_time', 0) < 15000) return;
 
       Storage.set('sched_last_run_date', today);
-      log(`⏰ 每日定时触发（${scheduleTime}），自动开始新一轮浏览`);
+      log(`⏰ 每日定时触发（${scheduleTime} + ${jitterMin} 分抖动），自动开始新一轮浏览`);
       this.start(false, true);
     }
 
