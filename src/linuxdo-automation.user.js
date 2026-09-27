@@ -1802,15 +1802,16 @@
         input.addEventListener('keydown', (e) => e.stopPropagation());
         input.addEventListener('change', (e) => {
           applyTargets(e.target.value);
-          e.target.value = (input === topicsInput) ? (topicTarget > 0 ? topicTarget : '') : (likeTarget > 0 ? likeTarget : '');
+          // 输入 0（不限）后固定显示 0，避免清空输入框露出灰色占位符「20」造成误会
+          e.target.value = (input === topicsInput) ? String(topicTarget) : String(likeTarget);
           this.updateSchedStatus();
         });
       };
       const topicsInput = document.getElementById('target-topics-input');
-      topicsInput.value = topicTarget > 0 ? topicTarget : '';
+      topicsInput.value = String(topicTarget);
       bindTargetInput(topicsInput, (v) => setTargets(v, likeTarget));
       const likesInput = document.getElementById('target-likes-input');
-      likesInput.value = likeTarget > 0 ? likeTarget : '';
+      likesInput.value = String(likeTarget);
       bindTargetInput(likesInput, (v) => setTargets(topicTarget, v));
 
       // 单次运行时长上限（分钟）
