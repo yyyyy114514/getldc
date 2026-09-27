@@ -1664,7 +1664,7 @@
             </div>
             <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览与点赞都达标才自动停止（0 为不限），超时也会自动停</div>
             <div class="row"><span class="row-label">浮窗</span>
-              <label class="floor-check" title="开启后面板不再显示统计信息，改为页面左上角半透明浮窗显示；再次点击关闭恢复面板内显示">
+              <label class="floor-check" title="面板内不再显示统计信息；勾选后改为页面左上角半透明浮窗实时显示（可拖动到任意位置），取消勾选则任何位置都不显示统计信息">
                 <input type="checkbox" id="floating-stats">半透明信息浮窗
               </label>
             </div>
@@ -1840,19 +1840,22 @@
           childList: true, subtree: true, characterData: true, attributes: true
         });
       }
+      // 面板内统计区永远不再显示（用户要求），统计信息只通过浮窗展示
+      statsBlock.style.display = 'none';
+      const applyStatsDisplay = () => {
+        floatBox.classList.toggle('hidden', !floatingStats);
+      };
       const floatingStatsCheck = document.getElementById('floating-stats');
       floatingStatsCheck.checked = floatingStats;
       floatingStatsCheck.addEventListener('change', (e) => {
         floatingStats = e.target.checked;
         Storage.set('floating_stats', floatingStats);
-        statsBlock.style.display = floatingStats ? 'none' : '';
-        floatBox.classList.toggle('hidden', !floatingStats);
-        log(floatingStats ? '已开启半透明信息浮窗（左上角）' : '已关闭浮窗，恢复面板内显示统计信息');
+        applyStatsDisplay();
+        log(floatingStats
+          ? '已开启半透明信息浮窗（左上角，可拖动）'
+          : '已关闭浮窗，统计信息不再显示');
       });
-      if (floatingStats) {
-        statsBlock.style.display = 'none';
-        floatBox.classList.remove('hidden');
-      }
+      applyStatsDisplay();
 
       // 浮窗可拖动：按住整个浮窗拖到任意位置，松手记住位置（限制在视口内）
       const floatPos = Storage.get('float_pos', null);
