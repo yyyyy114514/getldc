@@ -104,6 +104,8 @@
 
   // 点赞开关
   let enableLike = true;
+  // 只给主帖（楼主帖）点赞，不给回复楼层点赞
+  let likeMainOnly = false;
 
   // 点赞概率预设
   const LIKE_CHANCE_PRESETS = {
@@ -126,6 +128,8 @@
   // 会话目标：本次浏览满 N 帖或点满 M 赞即自动停止；0 表示该项不限
   let topicTarget = 20;
   let likeTarget = 10;
+  // 单次运行时长上限（分钟）：0 表示不限
+  let maxMinutes = 0;
 
   const CONFIG = {
     // 动态从速度预设获取；高级设置里的数值优先（>0 覆盖预设，0/留空跟随预设）
@@ -195,6 +199,13 @@
     }
   }
 
+  // 只赞主帖：开启后仅给楼主帖点赞，跳过所有回复楼层
+  function setLikeMainOnly(enabled) {
+    likeMainOnly = enabled;
+    Storage.set('like_main_only', enabled);
+    log(enabled ? '只赞主帖：仅给楼主帖点赞' : '点赞范围：帖子与回复楼层都点赞');
+  }
+
   // 处理点赞限制：点赞走 API 直连（sendLikeRequest），命中 429/rate_limit 时调用，
   // 直接关掉点赞开关避免继续触发风控（API 点赞不弹 UI 对话框，故无需检测或关闭弹窗）
   function handleLikeLimit() {
@@ -222,6 +233,14 @@
     floorLimitUnreadOnly = enabled;
     Storage.set('floor_limit_unread_only', enabled);
     log(`楼层限制口径: ${enabled ? '只计未读楼层' : '按楼层号'}`);
+  }
+
+  // 单次运行时长上限（分钟）：0 表示不限
+  function setMaxMinutes(value) {
+    const n = Math.max(0, Math.floor(Number(value) || 0));
+    maxMinutes = n;
+    Storage.set('max_minutes', n);
+    log(`单次时长上限设置为: ${n > 0 ? `${n} 分钟` : '不限'}`);
   }
 
   // 每日定时设置：时间格式 HH:MM，非法输入回落 09:00
@@ -403,11 +422,13 @@
   currentSpeed = Storage.get('speed_preset', 'normal');
   currentList = Storage.get('list_type', 'latest');
   enableLike = Storage.get('enable_like', true);
+  likeMainOnly = Storage.get('like_main_only', false);
   currentLikeChance = Storage.get('like_chance', 'medium');
   floorLimit = Storage.get('floor_limit', 0);
   floorLimitUnreadOnly = Storage.get('floor_limit_unread_only', false);
   topicTarget = Storage.get('topic_target', 20);
   likeTarget = Storage.get('like_target', 10);
+  maxMinutes = Storage.get('max_minutes', 0);
   scheduleEnabled = Storage.get('sched_enabled', false);
   scheduleTime = Storage.get('sched_time', '09:00');
   CONFIG.debug = Storage.get('debug', false);
@@ -548,13 +569,15 @@
       };
     }
 
+    // 全部目标达成才停：浏览帖数与点赞数二者都达标（0=不限 的项不设门槛）
     canContinue() {
       const maxTopics = CONFIG.maxTopicsPerSession;
       const maxLikes = CONFIG.maxLikesPerSession;
-      // 目标为 0 表示该项不限（只靠另一项或「扫完列表」收尾）
-      if (maxTopics > 0 && this.sessionViewed >= maxTopics) return false;
-      if (maxLikes > 0 && this.sessionLiked >= maxLikes) return false;
-      return true;
+      const anyGoal = maxTopics > 0 || maxLikes > 0;
+      if (!anyGoal) return true; // 全不限：一直刷到列表扫完
+      const topicsDone = maxTopics <= 0 || this.sessionViewed >= maxTopics;
+      const likesDone = maxLikes <= 0 || this.sessionLiked >= maxLikes;
+      return !(topicsDone && likesDone);
     }
   }
 
@@ -717,16 +740,21 @@
     }
 
     async scrollDown() {
-      // 反检测：步长随机抖动 ±scrollJitter，且约 1/3 概率拆成「大步+小步」两次滚动，
-      // 模拟人手动滚动时快慢不一的节奏，避免恒定步长的机械感
+      // 反卡顿+反检测：整段位移拆成 2~4 段小步连续滚动（段间 90-220ms 随机停顿），
+      // 视觉上是「连续匀速下滑」而不是「一跳一跳」；步长仍带 ±scrollJitter 抖动
       const jitter = CONFIG.scrollJitter;
-      const amount = CONFIG.scrollStep + randomInt(-jitter, jitter);
-      if (Math.random() < 0.3) {
-        window.scrollBy({ top: Math.round(amount * 0.7), behavior: 'auto' });
-        await randomDelay(120, 350);
-        window.scrollBy({ top: Math.round(amount * 0.3), behavior: 'auto' });
-      } else {
-        window.scrollBy({ top: amount, behavior: 'auto' });
+      const total = CONFIG.scrollStep + randomInt(-jitter, jitter);
+      if (total <= 0) return;
+      const steps = randomInt(2, 4);
+      let done = 0;
+      for (let i = 0; i < steps && done < total; i++) {
+        const remaining = total - done;
+        // 前几段每次只滚掉 45%~65%，最后一段吃掉剩余部分，保证总位移一致
+        const seg = (i === steps - 1) ? remaining : Math.round(remaining * (0.45 + Math.random() * 0.2));
+        if (seg <= 0) break;
+        window.scrollBy({ top: seg, behavior: 'auto' });
+        done += seg;
+        if (i < steps - 1) await randomDelay(90, 220);
       }
     }
 
@@ -744,6 +772,11 @@
       }
       this.noNewContentCount++;
       return false;
+    }
+
+    // 只探测页面是否长高（不累计计数），供等待新内容的轮询使用
+    checkHeightChanged() {
+      return document.documentElement.scrollHeight > this.lastScrollHeight;
     }
 
     isContentFullyLoaded() {
@@ -860,8 +893,13 @@
 
           if (this.scrollController.isAtBottom()) {
             log('到达页面底部，等待加载新内容...');
-            await randomDelay(CONFIG.loadWaitTime, CONFIG.loadWaitTime * 1.2);
-
+            // 反卡顿：不再干等满 loadWaitTime，改为轮询页面高度（约每 1s 一次），
+            // 新内容一加载就立即继续滚动；等待结束后统一结算一次 noNewContentRetry（保持原有判定语义）
+            const waitDeadline = Date.now() + CONFIG.loadWaitTime;
+            while (Date.now() < waitDeadline && this.isRunning) {
+              await randomDelay(900, 1300);
+              if (this.scrollController.checkHeightChanged()) break;
+            }
             if (!this.scrollController.hasNewContent()) {
               if (this.scrollController.isContentFullyLoaded()) {
                 log('所有回复已浏览完成');
@@ -911,7 +949,7 @@
             await randomDelay(CONFIG.minReadTime, CONFIG.maxReadTime);
           }
 
-          if (this.shouldLike()) {
+          if (this.shouldLike(post)) {
             await this.tryLikePost(post, postId);
           }
         }
@@ -927,8 +965,10 @@
       return Number.isFinite(floor) && floor > floorLimit;
     }
 
-    shouldLike() {
+    shouldLike(postElement) {
       if (!enableLike) return false;
+      // 只赞主帖：跳过回复楼层（Discourse 楼主帖的 article id 恒为 post_1）
+      if (likeMainOnly && postElement && postElement.id !== 'post_1') return false;
       if (this.history.sessionLiked >= CONFIG.maxLikesPerSession) return false;
       const now = Date.now();
       if (now - this.lastLikeTime < CONFIG.minLikeInterval) return false;
@@ -1095,9 +1135,9 @@
         }
 
         if (!this.history.canContinue()) {
-          log('达到会话目标，本轮结束');
+          log('全部目标达成，本轮结束');
           this.stop();
-          this.onFinished?.('达到目标');
+          this.onFinished?.('全部目标达成');
           return false;
         }
 
@@ -1176,6 +1216,15 @@
 
     checkStuck() {
       if (!this.isEnabled) return;
+      // 单次时长上限：跑满设定分钟数就收工（0=不限）
+      if (maxMinutes > 0) {
+        const elapsedMin = (Date.now() - this.startTime) / 60000;
+        if (elapsedMin >= maxMinutes) {
+          log(`达到单次时长上限（${maxMinutes} 分钟），本轮结束`);
+          this.finishRun('超时');
+          return;
+        }
+      }
       const now = Date.now();
       const elapsed = now - this.lastActivityTime;
 
@@ -1467,6 +1516,10 @@
         #linuxdo-auto-panel .settings-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; }
         #linuxdo-auto-panel .settings-grid .row-hint { grid-column: 1 / -1; }
         #linuxdo-auto-panel .settings-grid .row { min-width: 0; }
+        /* 目标行内容多（3 个输入+说明），占满整行 */
+        #linuxdo-auto-panel .settings-grid .row-goal { grid-column: 1 / -1; }
+        /* 输入框旁边的文字说明（浏览帖数/点赞数/时长上限） */
+        #linuxdo-auto-panel .goal-unit { flex: none; font-size: 11px; color: rgba(255,255,255,0.68); margin: 0 8px 0 2px; white-space: nowrap; }
 
         /* 高级设置面板：同样两列，边框与上文分隔 */
         #linuxdo-auto-panel .adv-box {
@@ -1545,7 +1598,11 @@
             <div class="row"><span class="row-label">点赞</span><div class="seg">
               <button class="speed-btn like-btn ${enableLike?'active':''}" data-like="true">开启</button>
               <button class="speed-btn like-btn ${!enableLike?'active':''}" data-like="false">关闭</button>
-            </div></div>
+            </div>
+              <label class="floor-check floor-check-inline" title="只给楼主帖（话题首帖）点赞，不给回复楼层点赞">
+                <input type="checkbox" id="like-main-only">只赞主帖
+              </label>
+            </div>
             <div class="row${enableLike?'':' hidden'}" id="like-chance-row"><span class="row-label">概率</span><div class="seg">
               <button class="speed-btn chance-btn ${currentLikeChance==='low'?'active':''}" data-chance="low" title="约 5% 概率点赞">低</button>
               <button class="speed-btn chance-btn ${currentLikeChance==='medium'?'active':''}" data-chance="medium" title="约 15% 概率点赞">中</button>
@@ -1567,13 +1624,18 @@
               <input type="time" class="floor-input sched-time" id="sched-time-input" step="60"
                 title="每天到这个时间自动开始新一轮浏览；修改时间即自动开启定时">
             </div>
-            <div class="row"><span class="row-label">目标</span>
+            <div class="row row-goal"><span class="row-label">目标</span>
               <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
-                placeholder="浏览帖数" title="本轮浏览满 N 帖自动停止，0 表示不限">
+                placeholder="20" title="本轮浏览满 N 帖自动停止，0 表示不限">
+              <span class="goal-unit">浏览帖数</span>
               <input type="number" class="floor-input target-input" id="target-likes-input" min="0" step="1"
-                placeholder="点赞数" title="本轮点满 N 个赞自动停止，0 表示不限">
+                placeholder="10" title="本轮点满 N 个赞自动停止，0 表示不限">
+              <span class="goal-unit">点赞数</span>
+              <input type="number" class="floor-input target-input" id="max-minutes-input" min="0" step="1"
+                placeholder="0" title="本轮最多运行 N 分钟自动停止，0 表示不限">
+              <span class="goal-unit">时长上限(分)</span>
             </div>
-            <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览或点赞任一达标即自动停止，0 为不限</div>
+            <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览与点赞都达标才自动停止（0 为不限），超时也会自动停</div>
           </div>
           <button class="action-btn btn-advanced" id="btn-advanced">⚙ 高级设置</button>
           <div class="adv-box hidden" id="adv-box">
@@ -1638,6 +1700,10 @@
         e.target.classList.add('active');
       }));
 
+      const likeMainOnlyCheck = document.getElementById('like-main-only');
+      likeMainOnlyCheck.checked = likeMainOnly;
+      likeMainOnlyCheck.addEventListener('change', (e) => setLikeMainOnly(e.target.checked));
+
       const floorInput = document.getElementById('floor-limit-input');
       floorInput.value = floorLimit > 0 ? floorLimit : '';
       // Discourse 绑了一堆单键快捷键（j/k 翻楼等），输入框里的按键不能冒泡出去
@@ -1688,6 +1754,15 @@
       const likesInput = document.getElementById('target-likes-input');
       likesInput.value = likeTarget > 0 ? likeTarget : '';
       bindTargetInput(likesInput, (v) => setTargets(topicTarget, v));
+
+      // 单次运行时长上限（分钟）
+      const maxMinutesInput = document.getElementById('max-minutes-input');
+      maxMinutesInput.value = maxMinutes > 0 ? maxMinutes : '';
+      maxMinutesInput.addEventListener('keydown', (e) => e.stopPropagation());
+      maxMinutesInput.addEventListener('change', (e) => {
+        setMaxMinutes(e.target.value);
+        e.target.value = maxMinutes > 0 ? maxMinutes : '';
+      });
 
       // 高级设置面板：展开/收起 + 9 项数值输入（0/留空=跟随预设）
       const btnAdvanced = document.getElementById('btn-advanced');
@@ -1898,6 +1973,7 @@
       this.isEnabled = true;
       Storage.set('auto_running', true);
       this.heartbeat();
+      this.startTime = Date.now();
 
       document.getElementById('btn-auto-start').style.display = 'none';
       document.getElementById('btn-auto-stop').style.display = 'block';
