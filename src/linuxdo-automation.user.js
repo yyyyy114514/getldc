@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.6.5
+// @version      2.6.6
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -115,12 +115,20 @@
   // 分区选择：'all' = 不限分区（浏览全站未读/新帖/最新）；
   // 数组 = 只浏览这些分区（默认与 dosss 一致：CATEGORY_LIST 中 enabled 的 12 个）
   const DEFAULT_SELECTED_CATEGORIES = CATEGORY_LIST.filter(c => c.enabled).map(c => c.url);
-  let selectedCategories = Storage.get('selected_categories', null);
-  if (selectedCategories === null) selectedCategories = DEFAULT_SELECTED_CATEGORIES.slice();
-  else if (selectedCategories !== 'all') {
-    // 容错：剔除已不存在的分区路径，防止过期配置让轮换目标悬空
-    selectedCategories = (Array.isArray(selectedCategories) ? selectedCategories : []).filter(u =>
-      CATEGORY_LIST.some(c => c.url === u));
+  // 注意：Storage 类在文件靠后位置才定义（class 声明不提升），
+  // 此处只能先声明变量，实际读取推迟到 loadSelectedCategories()（Storage 定义完成后调用）
+  let selectedCategories = null;
+
+  // 从存储加载分区选择（'all' 或所选分区 url 数组），在 Storage 类定义后调用
+  function loadSelectedCategories() {
+    let stored = Storage.get('selected_categories', null);
+    if (stored === null) stored = DEFAULT_SELECTED_CATEGORIES.slice();
+    else if (stored !== 'all') {
+      // 容错：剔除已不存在的分区路径，防止过期配置让轮换目标悬空
+      stored = (Array.isArray(stored) ? stored : []).filter(u =>
+        CATEGORY_LIST.some(c => c.url === u));
+    }
+    selectedCategories = stored;
   }
 
   function isCategoryMode() {
@@ -491,6 +499,7 @@
   scheduleEnabled = Storage.get('sched_enabled', false);
   scheduleTime = Storage.get('sched_time', '09:00');
   CONFIG.debug = Storage.get('debug', false);
+  loadSelectedCategories();
 
   // 数据迁移：v2.1.1 起 liked_posts 的键从话题内楼层序号改为全局 post id，
   // 旧键在新逻辑下全部失配（脏数据），一次性清空，避免重访旧话题时把已点赞的帖子误 toggle 取消
