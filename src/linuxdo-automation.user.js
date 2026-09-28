@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.1
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标、每帖重抽点赞概率与阅读/滚动节奏/中途离场，点赞走页面真实按钮（含偶发犹豫）
+// @version      2.7.2
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标、每帖重抽点赞概率与阅读/滚动节奏/中途离场，点赞走页面真实按钮（含偶发犹豫）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -184,6 +184,8 @@
   // 模拟普通用户的长期行为分布。速度档位、定时时间、目标数值等原有设置全部保留作为基准，
   // 仅在本模式开启时被每日随机配置接管。点赞等所有操作均走页面真实按钮点击（见 clickLikeButton）。
   let humanMode = false;
+  // 【v2.7.2 调试模式】会话内有效，不落盘：开启即强制人化 + 立即开始（跳过每日定时等待）
+  let debugMode = false;
 
   // 点赞概率预设
   const LIKE_CHANCE_PRESETS = {
@@ -490,6 +492,24 @@
     syncPanelHumanVisibility();
     if (humanMode) ensureDailyProfile();
     log(`人化随机模式: ${humanMode ? '已开启' : '已关闭'}`);
+  }
+
+  // 【v2.7.2 调试模式】一键强制开启人化模式并立即开始浏览（跳过每日定时等待）：
+  // 人化模式每天在「所选时段内随机基准时刻+偏移」才自动启动，想立刻验证人化行为
+  // 就得手动等定时或临时改时段。调试开关把「强制人化 + 立即开跑」合并成一步。
+  // 会话内生效（不落盘）：刷新后按钮回到关闭态，人化是否保持由 human_mode 独立决定。
+  function setDebugMode(enabled) {
+    debugMode = !!enabled;
+    document.querySelectorAll('.debug-btn[data-debug]').forEach(btn => {
+      btn.classList.remove('active');
+      if ((btn.dataset.debug === 'true') === debugMode) btn.classList.add('active');
+    });
+    if (debugMode) {
+      setHumanMode(true); // 强制人化：接管速度/定时/目标/高级设置
+      log('调试模式：已强制开启人化模式（跳过每日定时等待）');
+    } else {
+      log('调试模式已关闭');
+    }
   }
 
   // 人化专属设置：切换所选时段。改了立即生效——今天剩余的基准时刻按新时段重摇，
@@ -2133,6 +2153,14 @@
         #linuxdo-auto-panel .row-human .row-label { color: #cfc0ff; font-weight: 600; }
         #linuxdo-auto-panel .row-human .speed-btn.active { background: #5b3bc4; color: #fff; }
 
+        /* 调试模式：警示色（琥珀）区分于人化的紫色 */
+        #linuxdo-auto-panel .row-debug {
+          grid-column: 1 / -1; background: linear-gradient(90deg, rgba(214,140,40,0.20), rgba(214,140,40,0.05));
+          border: 1px dashed rgba(214,140,40,0.55); border-radius: 10px; padding: 7px 9px; margin-bottom: 4px;
+        }
+        #linuxdo-auto-panel .row-debug .row-label { color: #ffc46b; font-weight: 600; }
+        #linuxdo-auto-panel .row-debug .speed-btn.active { background: #c07a1e; color: #fff; }
+
         /* 人化专属设置区（开启人化后才显示）：整块纵向堆叠，内部各项各占一行 */
         #linuxdo-auto-panel .row-human-opt {
           grid-column: 1 / -1;
@@ -2342,6 +2370,11 @@
               <button class="speed-btn human-btn ${!humanMode?'active':''}" data-human="false" title="使用下方手动设置">关闭</button>
             </div></div>
             <div class="row-hint">开启后速度档位/具体定时/目标数值/高级设置由人化算法接管（隐藏），下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
+            <div class="row row-debug"><span class="row-label">调试模式</span><div class="seg">
+              <button class="speed-btn debug-btn ${debugMode?'active':''}" data-debug="true" title="立即开启人化模式并跳过每日定时等待，马上开始一轮浏览（用于调试/尝鲜，刷新后自动关闭）">开启</button>
+              <button class="speed-btn debug-btn ${!debugMode?'active':''}" data-debug="false" title="关闭调试模式">关闭</button>
+            </div></div>
+            <div class="row-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（刷新页面后自动关闭，人化开关仍由上方控制）</div>
             <div class="row row-human-opt ${humanMode?'':' hidden'}" id="human-options">
               <div class="row-human-opt-title">人化专属设置（开启后生效）</div>
               <div class="row row-human-opt-line"><span class="row-label">时段</span><div class="seg">
@@ -2496,6 +2529,19 @@
       }));
       document.querySelectorAll('.human-btn[data-human]').forEach(btn => btn.addEventListener('click', (e) => {
         setHumanMode(e.target.dataset.human === 'true');
+      }));
+
+      // 调试模式：开启时强制人化 + 立即开始（跳过每日定时等待），刷新后自动关闭
+      document.querySelectorAll('.debug-btn[data-debug]').forEach(btn => btn.addEventListener('click', (e) => {
+        const on = e.target.dataset.debug === 'true';
+        setDebugMode(on);
+        if (!on) return;
+        if (this.isEnabled) {
+          log('调试模式：已在浏览中，人化参数已即时生效');
+        } else {
+          log('调试模式：立即开始一轮人化浏览（跳过每日定时等待）');
+          this.start(true, true);
+        }
       }));
 
       const likeMainOnlyCheck = document.getElementById('like-main-only');
