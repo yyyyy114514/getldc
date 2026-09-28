@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.2
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标、每帖重抽点赞概率与阅读/滚动节奏/中途离场，点赞走页面真实按钮（含偶发犹豫）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）
+// @version      2.7.3
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -354,6 +354,15 @@
     return parseInt(Storage.get('human_like_target', 0), 10) || 0;
   }
 
+  // 【v2.7.3 人化翻楼】人化模式下每帖浏览楼层上限：每天在 human_floor_min~max 范围内
+  // 随机抽一个当天的翻楼数（0=不限，整帖读完）。与 floorLimit 相互独立：人化接管时
+  // isOverFloorLimit 用这里的值，非人化仍走用户手设的 floorLimit
+  function humanFloorTarget() {
+    if (!humanMode) return 0;
+    ensureDailyProfile();
+    return parseInt(Storage.get('human_floor_target', 0), 10) || 0;
+  }
+
   // 每帖一摇的喜好参数（内存态，只在本会话内生效；页面刷新/换帖自动重抽）。
   // 真人喜好是多变的：同一篇帖子可能很感兴趣读得久、下一帖划两下就走。
   // 换帖重抽的维度：点赞概率（4档加权）、阅读投入度、滚动步长、翻页间隔、加载等待、
@@ -438,16 +447,20 @@
     const topicHi = Storage.get('human_topic_max', 50);
     const likeLo = Storage.get('human_like_min', 10);
     const likeHi = Storage.get('human_like_max', 20);
+    const floorLo = Storage.get('human_floor_min', 0);
+    const floorHi = Storage.get('human_floor_max', 0);
     Storage.set('human_topic_target', drawRangeTarget(topicLo, topicHi));
     Storage.set('human_like_target', drawRangeTarget(likeLo, likeHi));
+    Storage.set('human_floor_target', drawRangeTarget(floorLo, floorHi));
     const t = Storage.get('human_tempo', 1);
     const base = parseInt(Storage.get('human_sched_base', 1080), 10);
     const off = parseInt(Storage.get('human_sched_offset', 0), 10);
     const tt = parseInt(Storage.get('human_topic_target', 0), 10);
     const lt = parseInt(Storage.get('human_like_target', 0), 10);
+    const ft = parseInt(Storage.get('human_floor_target', 0), 10);
     const hh = String(Math.floor(base / 60)).padStart(2, '0');
     const mm = String(base % 60).padStart(2, '0');
-    log(`人化模式：今日节奏 ×${t.toFixed(2)}，基准时段 ${hh}:${mm} 偏移 ${off >= 0 ? '+' : ''}${off} 分，目标 ${tt > 0 ? tt : '不限'} 帖 / ${lt > 0 ? lt : '不限'} 赞`);
+    log(`人化模式：今日节奏 ×${t.toFixed(2)}，基准时段 ${hh}:${mm} 偏移 ${off >= 0 ? '+' : ''}${off} 分，目标 ${tt > 0 ? tt : '不限'} 帖 / ${lt > 0 ? lt : '不限'} 赞 / 每帖 ${ft > 0 ? `前${ft}楼` : '不限'}`);
   }
 
   // 人化速度：以「正常」档为基准，按今日节奏 τ 整体缩放，再叠加每帖喜好缩放
@@ -534,7 +547,7 @@
     }
   }
 
-  // 人化目标范围（帖/赞）：min~max 输入写回；开启人化时重摇当日目标（0 表示不限）
+  // 人化目标范围（帖/赞/翻楼）：min~max 输入写回；开启人化时重摇当日目标（0 表示不限）
   function setHumanGoalRange(prefix, minVal, maxVal) {
     const lo = Math.max(0, Math.floor(Number(minVal) || 0));
     const hi = Math.max(0, Math.floor(Number(maxVal) || 0));
@@ -544,10 +557,16 @@
     if (humanMode) {
       Storage.set(key, drawRangeTarget(lo, hi));
       const t = parseInt(Storage.get(key, 0), 10);
-      log(`人化${prefix === 'topic' ? '浏览' : '点赞'}目标范围改为 ${lo}~${hi}，今日目标重摇为 ${t > 0 ? t : '不限'}`);
+      log(`人化${labelHumanGoal(prefix)}目标范围改为 ${lo}~${hi}，今日目标重摇为 ${t > 0 ? t : '不限'}`);
     } else {
-      log(`人化${prefix === 'topic' ? '浏览' : '点赞'}目标范围设为 ${lo}~${hi}（开启人化后生效）`);
+      log(`人化${labelHumanGoal(prefix)}目标范围设为 ${lo}~${hi}（开启人化后生效）`);
     }
+  }
+
+  function labelHumanGoal(prefix) {
+    if (prefix === 'topic') return '浏览';
+    if (prefix === 'floor') return '翻楼';
+    return '点赞';
   }
 
   // 人化时长上限（定死单值，0=不限）
@@ -561,7 +580,7 @@
   // 显示人化专属设置区（时段+目标范围+时长）；关掉时恢复
   function syncPanelHumanVisibility() {
     if (typeof document === 'undefined' || !document.getElementById) return;
-    ['speed', 'schedule', 'goal', 'advanced'].forEach(k => {
+    ['speed', 'schedule', 'goal', 'advanced', 'floor'].forEach(k => {
       const el = document.getElementById(`human-hide-${k}`);
       if (el) el.classList.toggle('hidden', humanMode);
     });
@@ -584,6 +603,11 @@
   function setEnableLike(enabled, updateUI = true) {
     enableLike = enabled;
     Storage.set('enable_like', enabled);
+    // 【v2.7.3】用户手动重新开启点赞时，清除上次 429 限流留下的冷却标记，
+    // 避免旧版本把 enable_like 永久关掉后，用户重新打开也仍被冷处理器卡住
+    if (enabled) {
+      Storage.set('like_disabled_until', 0);
+    }
     log(`随机点赞: ${enabled ? '已开启' : '已关闭'}`);
 
     // 更新UI按钮状态
@@ -607,11 +631,14 @@
     log(enabled ? '只赞主帖：仅给楼主帖点赞' : '点赞范围：帖子与回复楼层都点赞');
   }
 
-  // 处理点赞限制：点赞走 API 直连（sendLikeRequest），命中 429/rate_limit 时调用，
-  // 直接关掉点赞开关避免继续触发风控（API 点赞不弹 UI 对话框，故无需检测或关闭弹窗）
+  // 处理点赞限制：点赞走 API 直连（sendLikeRequest）或页面真实按钮，命中 429/rate_limit 时调用。
+  // 【v2.7.3 修复】不再永久关闭点赞开关——一次限流就把 enable_like 落盘为 false，会导致之后
+  // 所有会话（含人化模式）永不点赞、面板恒 0，且用户无从得知开关被自动关掉。改为 30 分钟
+  // 临时冷却：写入 like_disabled_until，shouldLike 在冷却期内跳过点赞，到期自动恢复。
   function handleLikeLimit() {
-    log('已达到点赞上限，自动关闭点赞功能');
-    setEnableLike(false, true);
+    const until = Date.now() + 30 * 60 * 1000;
+    Storage.set('like_disabled_until', until);
+    log('点赞被限流：暂停点赞 30 分钟（到期自动恢复，无需手动开关）');
   }
 
   function setLikeChance(preset) {
@@ -1289,7 +1316,9 @@
       // 该帖实际总楼层数：用作滚动/等待的硬上限，帖子只有 2 楼就不会白等到「不存在的第 3 楼」
       this.topicTotalPosts = getTopicTotalPosts(topicId);
       if (this.topicTotalPosts > 0) {
-        log(`话题共 ${this.topicTotalPosts} 楼${floorLimit > 0 && this.topicTotalPosts < floorLimit ? `（小于楼层上限 ${floorLimit}，读完即换帖）` : ''}`);
+        // 【v2.7.3 人化翻楼】人化下用每日翻楼目标（0=不限），非人化用手设 floorLimit
+        const floorCap = humanMode ? humanFloorTarget() : floorLimit;
+        log(`话题共 ${this.topicTotalPosts} 楼${floorCap > 0 && this.topicTotalPosts < floorCap ? `（小于楼层上限 ${floorCap}，读完即换帖）` : ''}`);
       }
 
       // 进入时先取已读位置快照：它既是「只计未读」的计数起点，也用来判断该续读还是从头读
@@ -1472,26 +1501,46 @@
     }
 
     // 楼层限额判定：默认按绝对楼层号卡（只看前 N 楼）；
-    // 开启「只计未读」后改按实际浏览到的未读楼层个数卡，已读楼层滚过不计数
+    // 开启「只计未读」后改按实际浏览到的未读楼层个数卡，已读楼层滚过不计数。
+    // 【v2.7.3 人化翻楼】人化模式下用每日随机抽取的翻楼目标（human_floor_target），
+    // 而非用户手设的 floorLimit
     isOverFloorLimit(floor) {
-      if (floorLimit <= 0) return false;
-      if (floorLimitUnreadOnly) return this.unreadFloorsRead >= floorLimit;
-      return Number.isFinite(floor) && floor > floorLimit;
+      const limit = humanMode ? humanFloorTarget() : floorLimit;
+      if (limit <= 0) return false;
+      if (floorLimitUnreadOnly) return this.unreadFloorsRead >= limit;
+      return Number.isFinite(floor) && floor > limit;
     }
 
     shouldLike(postElement) {
       if (!enableLike) return false;
+      // 【v2.7.3 修复】429 限流冷却期内跳过点赞（handleLikeLimit 写入 like_disabled_until，
+      // 30 分钟自动恢复；冷却期内即使开关开着也不点赞，避免继续触发风控）
+      if (Date.now() < (parseInt(Storage.get('like_disabled_until', 0), 10) || 0)) return false;
       // 只赞主帖：跳过回复楼层（Discourse 楼主帖的 article id 恒为 post_1）
       if (likeMainOnly && postElement && postElement.id !== 'post_1') return false;
-      if (this.history.sessionLiked >= CONFIG.maxLikesPerSession) return false;
+      if (CONFIG.maxLikesPerSession > 0 && this.history.sessionLiked >= CONFIG.maxLikesPerSession) return false;
       const now = Date.now();
       const elapsed = now - this.lastLikeTime;
       // 【反检测 v2.6.9】点赞间隔不再设「绝不下限」的硬门槛：真人的点赞间隔分布里
       // 偶尔会出现 1 秒内的快速连赞（兴奋/手滑），恒定的 >=2000ms 下限本身就是
       // 统计指纹。改为软性：绝大多数维持最小间隔，偶发（约 8%）放行一次快速连赞
-      // （400ms 以上即可），过快仍会被 429 风控兜底（handleLikeLimit 自动关点赞）
+      // （400ms 以上即可），过快仍会被 429 风控兜底（handleLikeLimit 临时冷却）
       if (elapsed < CONFIG.minLikeInterval) {
         if (!(elapsed >= 400 && Math.random() < 0.08)) return false;
+      }
+      // 【v2.7.3 目标自适应】人化模式下按今日目标预算动态抬高点赞概率：剩余赞数 /
+      // 剩余浏览目标（帖），算「每帖还需点几个赞」的平均需求，与每帖抽签概率取大者——
+      // 目标 12 赞/30 帖时平均需求 0.4，若只按基础抽签（均值约 13.5%）要读 90 帖才能点满，
+      // 按需求加成后 30 帖左右就能达成，也符合「浏览目标内自然点满」的人设
+      if (humanMode) {
+        const likeGoal = CONFIG.maxLikesPerSession;    // 人化下 = humanLikeTarget()，0=不限
+        const topicGoal = CONFIG.maxTopicsPerSession;  // 人化下 = humanTopicTarget()，0=不限
+        if (likeGoal > 0 && topicGoal > 0) {
+          const remainingLikes = Math.max(0, likeGoal - this.history.sessionLiked);
+          const remainingTopics = Math.max(1, topicGoal - this.history.sessionViewed);
+          const needed = clamp(remainingLikes / remainingTopics, 0, 0.6);
+          return Math.random() < Math.max(CONFIG.likeChance, needed);
+        }
       }
       return Math.random() < CONFIG.likeChance;
     }
@@ -1532,15 +1581,19 @@
 
         // 【反检测 v2.7.0】点赞一律走「点击页面真实按钮」：由页面自身 JS 发出带完整
         // 头部的原生请求，与真人点击产生的网络流量完全一致（机器人直接 fetch 会暴露
-        // 非浏览器指纹的特征）。按钮缺失（罕见）或点击后确认失败才退回 API 兜底。
+        // 非浏览器指纹的特征）。按钮缺失（罕见）才退回 API 兜底。
         const clicked = await this.clickLikeButton(postElement);
         let result;
         if (clicked.success) {
+          // 点击成功（或本就已赞）：直接记成功，绝不再发 toggle 取消它
           result = { success: true };
-        } else if (clicked.rateLimited) {
-          result = { success: false, rateLimited: true };
-        } else {
+        } else if (clicked.noButton) {
+          // 页面没有点赞按钮：退回 API 直连兜底
           result = await this.sendLikeRequest(actualPostId);
+        } else {
+          // 有点赞按钮但点击/确认失败：静默跳过本次，不盲发 toggle
+          // （第二次 toggle 会取消掉可能已经成功的真实点击，造成双倍请求与 429）
+          return false;
         }
 
         if (result.success) {
@@ -1570,13 +1623,17 @@
     // → filter 掉 has-like/my-likes → target.click()）与 linuxdo-checkin click_like
     // （.discourse-reactions-reaction-button → click()）：找到按钮后由页面自身 JS
     // 发出原生请求，网络流量与真人点击完全一致，不暴露 fetch 包装特征。
-    // 返回 { success, rateLimited }；success=false 时由调用方退回 sendLikeRequest 兜底。
+    // 返回 { success, rateLimited, noButton }：
+    //   success=true  -> 已确认点赞（或本就处于已赞态），调用方直接记成功
+    //   noButton=true  -> 页面根本没有点赞按钮，调用方退回 sendLikeRequest 兜底
+    //   success=false  -> 点击/确认失败，调用方静默跳过（绝不盲发 toggle，
+    //                     那会取消掉可能已经成功的真实点击）
     async clickLikeButton(postElement) {
       try {
         const btns = Array.from(postElement.querySelectorAll(
           'button.btn-toggle-reaction-like, button.discourse-reactions-reaction-button, button[title="点赞此帖子"], button[title="Like this post"]'
         ));
-        if (!btns.length) return { success: false };
+        if (!btns.length) return { success: false, noButton: true };
         // 过滤已赞按钮：按钮自身或最近 .post 容器带 has-like / my-likes / liked class
         const candidates = btns.filter(btn => {
           const post = btn.closest('.post');
@@ -1584,7 +1641,8 @@
           const s = `${btn.className} ${post ? post.className : ''} ${reactBtn ? reactBtn.className : ''}`;
           return !/(has-like|my-likes|liked|has-reacted|has-used-main-reaction)/i.test(s);
         });
-        if (!candidates.length) return { success: false };
+        // 候选全被滤掉 = 该帖本就被赞过（或按钮全部带已赞态）：直接按已赞处理，避免误 toggle
+        if (!candidates.length) return { success: true, already: true, noButton: false };
         const btn = candidates[Math.floor(Math.random() * candidates.length)];
         // 模拟真人：滚动到视野中央 → 悬停 → 点击
         btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
@@ -1600,16 +1658,32 @@
           await humanDelay(400, 900);
         }
         btn.click();
-        // 给页面 JS 发请求 + 状态更新留出时间后，校验按钮已进入已赞态（再次点击会取消，
-        // 这是人工确认信号；磁盘点赞记录仍以 history 为准）
-        await new Promise(resolve => setTimeout(resolve, 1200));
-        const postAfter = btn.closest('.post');
-        const reactAfter = btn.closest('.discourse-reactions-reaction-button');
-        const s2 = `${btn.className} ${postAfter ? postAfter.className : ''} ${reactAfter ? reactAfter.className : ''}`;
-        const liked = /(has-like|my-likes|liked|has-reacted|has-used-main-reaction)/i.test(s2);
-        return { success: liked, rateLimited: false };
+        // 【v2.7.3 修复】点击后每 300ms 轮询确认，最长 ~3s：
+        // 已赞态 (has-reacted/has-used-main-reaction) 由 discourse-reactions 插件加在
+        // 外层 .discourse-reactions-actions 容器上（与 watchManualLikes 观察的同源节点），
+        // 而非按钮或 .post 本身——旧代码查错节点导致「点了成功却判失败」，进而退回
+        // sendLikeRequest toggle 把刚点的赞取消掉，造成双倍请求和 429。
+        const likedState = () => {
+          const container = postElement.querySelector('.discourse-reactions-actions');
+          const containerCls = container ? container.className : '';
+          if (/(has-reacted|has-used-main-reaction|has-like|my-likes|liked)/i.test(containerCls)) return true;
+          // 标准 Discourse 点赞按钮（无 reactions 插件）：已赞态直接落在按钮上
+          const freshBtn = postElement.querySelector(
+            'button.btn-toggle-reaction-like, button.discourse-reactions-reaction-button, button[title="点赞此帖子"], button[title="Like this post"]'
+          );
+          return !!(freshBtn && /(has-like|my-likes|liked|has-reacted|has-used-main-reaction)/i.test(freshBtn.className));
+        };
+        let liked = likedState();
+        const deadline = Date.now() + 3000;
+        while (!liked && Date.now() < deadline) {
+          await new Promise(resolve => setTimeout(resolve, 300));
+          liked = likedState();
+        }
+        // 点了真实按钮（即便 3s 内没能确认）：也按成功返回，调用方记成功——真实点击的
+        // 请求已经发出，绝不能再发 toggle 去取消它；确认不到多半是 Ember 渲染延迟
+        return { success: true, confirmed: liked, noButton: false };
       } catch (e) {
-        return { success: false };
+        return { success: false, noButton: false };
       }
     }
 
@@ -2396,6 +2470,12 @@
                 <input type="number" class="floor-input target-input" id="human-like-max" min="0" step="1" value="${Storage.get('human_like_max', 20)}" title="每天在最小~最大之间随机抽一个点赞目标，0=不限">
                 <span class="goal-unit">赞</span>
               </div>
+              <div class="row row-human-opt-line"><span class="row-label">翻楼目标</span>
+                <input type="number" class="floor-input target-input" id="human-floor-min" min="0" step="1" value="${Storage.get('human_floor_min', 0)}" title="每帖浏览前 N 楼即换帖；每天在最小~最大之间随机抽一个，0=不限（整帖读完）">
+                <span class="goal-unit">~</span>
+                <input type="number" class="floor-input target-input" id="human-floor-max" min="0" step="1" value="${Storage.get('human_floor_max', 0)}" title="每帖浏览前 N 楼即换帖；每天在最小~最大之间随机抽一个，0=不限（整帖读完）">
+                <span class="goal-unit">楼</span>
+              </div>
               <div class="row row-human-opt-line"><span class="row-label">时长上限</span>
                 <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
                 <span class="goal-unit">分钟（0=不限）</span>
@@ -2427,7 +2507,7 @@
               <button class="speed-btn chance-btn ${currentLikeChance==='high'?'active':''}" data-chance="high" title="约 25% 概率点赞">高</button>
               <button class="speed-btn chance-btn ${currentLikeChance==='veryHigh'?'active':''}" data-chance="veryHigh" title="约 40% 概率点赞">极高</button>
             </div></div>
-            <div class="row"><span class="row-label">楼层</span>
+            <div class="row" id="human-hide-floor"><span class="row-label">楼层</span>
               <input type="number" class="floor-input" id="floor-limit-input" min="0" step="1"
                 placeholder="不限" title="每帖只浏览前 N 楼后换下一帖，留空或 0 表示不限">
               <label class="floor-check floor-check-inline" title="开启后已读楼层滚过不计数，只数上次阅读位置之后的新楼层">
@@ -2601,6 +2681,7 @@
       };
       bindHumanRangeInputs('human-topic-min', 'human-topic-max', 'topic', '浏览');
       bindHumanRangeInputs('human-like-min', 'human-like-max', 'like', '点赞');
+      bindHumanRangeInputs('human-floor-min', 'human-floor-max', 'floor', '翻楼');
       const humanDurationInput = document.getElementById('human-duration-input');
       humanDurationInput.addEventListener('keydown', (e) => e.stopPropagation());
       humanDurationInput.addEventListener('change', (e) => {
@@ -3246,11 +3327,13 @@
         ensureDailyProfile();
         const tt = humanTopicTarget();
         const lt = humanLikeTarget();
+        const ft = humanFloorTarget();
         const dm = humanDurationMin();
         const remain = tt > 0 ? tt : '不限';
         const likes = lt > 0 ? lt : '不限';
+        const floors = ft > 0 ? `前${ft}楼` : '不限';
         const minutes = dm > 0 ? `${dm} 分` : '不限';
-        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / ${minutes}`;
+        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / 翻楼 ${floors} / ${minutes}`;
       } else {
         const remain = topicTarget > 0 ? topicTarget : '不限';
         const likes = likeTarget > 0 ? likeTarget : '不限';
