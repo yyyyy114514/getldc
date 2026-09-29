@@ -577,10 +577,12 @@
   // 会话内生效（不落盘）：刷新后按钮回到关闭态，人化是否保持由 human_mode 独立决定。
   function setDebugMode(enabled) {
     debugMode = !!enabled;
-    document.querySelectorAll('.debug-btn[data-debug]').forEach(btn => {
-      btn.classList.remove('active');
-      if ((btn.dataset.debug === 'true') === debugMode) btn.classList.add('active');
-    });
+    // 【v2.7.5】调试开关改为单个小按钮（id=btn-debug-toggle），同步 active 态与文案
+    const dbgBtn = document.getElementById('btn-debug-toggle');
+    if (dbgBtn) {
+      dbgBtn.classList.toggle('active', debugMode);
+      dbgBtn.textContent = debugMode ? '已开启' : '开启';
+    }
     // 调试时联动控制台日志：看不到过程日志的调试毫无意义（修复：调试开关与 CONFIG.debug 脱节）
     CONFIG.debug = debugMode;
     if (debugMode) {
@@ -669,6 +671,12 @@
     if (chanceRow) chanceRow.classList.toggle('hidden', humanMode || !enableLike);
     const box = document.getElementById('human-options');
     if (box) box.classList.toggle('hidden', !humanMode);
+    // 【v2.7.5】人化模式下隐藏底部操作按钮（开始自动浏览/停止运行/清除浏览记录）：
+    // 人化模式的开始时机由每日时段随机控制，手动「开始自动浏览」按钮会误导用户
+    // 以为需要/可以手动触发（「时间是人化控制的」），一并隐藏避免误操作。
+    // 用包裹容器整体隐藏，避免覆盖 btn-auto-stop 的行内 display:none 默认态（运行生命周期管理它）
+    const actions = document.getElementById('panel-actions');
+    if (actions) actions.style.display = humanMode ? 'none' : '';
   }
 
   function setList(listType) {
@@ -1084,6 +1092,20 @@
   currentSpeed = Storage.get('speed_preset', 'normal');
   currentList = Storage.get('list_type', 'latest');
   enableLike = Storage.get('enable_like', true);
+  // 【v2.7.5】修复人化模式「刷了 9 帖 0 赞」：启动时清掉已过期的点赞冷却。
+  // like_disabled_until 是 30 分钟临时冷却（429 限流时由 handleLikeLimit 写入），
+  // 若上次限流后没等满 30 分钟就重启浏览，残留的未来时间戳会在 shouldLike L1715
+  // 静默拦截整轮点赞且面板无任何提示——这就是 0 赞且概率统计上不可能的根因之一。
+  const staleLikeUntil = parseInt(Storage.get('like_disabled_until', 0), 10) || 0;
+  if (staleLikeUntil > 0 && staleLikeUntil <= Date.now()) {
+    Storage.set('like_disabled_until', 0);
+    log('点赞冷却已过期，自动清除（本次启动不再拦截点赞）');
+  }
+  // 【v2.7.5】旧版（v2.7.2 及更早）429 会把点赞永久关闭并落盘 enable_like=false，
+  // 升级后该旧值仍会静默吞掉所有点赞（L1705）。不擅自改用户选择，但给出醒目提示。
+  if (!enableLike) {
+    log('⚠️ 点赞开关当前为「关闭」：若并非你手动关闭，可能是旧版本限流残留（v2.7.2 及更早会永久关闭点赞），请到面板「点赞」行点「开启」恢复');
+  }
   likeMainOnly = Storage.get('like_main_only', false);
   currentLikeChance = Storage.get('like_chance', 'medium');
   floorLimit = Storage.get('floor_limit', 0);
@@ -2711,10 +2733,9 @@
               <button class="speed-btn human-btn ${!humanMode?'active':''}" data-human="false" title="使用下方手动设置">关闭</button>
             </div></div>
             <div class="row-hint">开启后速度档位/具体定时/目标数值/高级设置由人化算法接管（隐藏），下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
-            <div class="row row-debug"><span class="row-label">调试模式</span><div class="seg">
-              <button class="speed-btn debug-btn ${debugMode?'active':''}" data-debug="true" title="立即开启人化模式并跳过每日定时等待，马上开始一轮浏览（用于调试/尝鲜，刷新后自动关闭）">开启</button>
-              <button class="speed-btn debug-btn ${!debugMode?'active':''}" data-debug="false" title="关闭调试模式">关闭</button>
-            </div></div>
+            <div class="row row-debug"><span class="row-label">调试开人化</span>
+              <button class="speed-btn debug-btn ${debugMode?'active':''}" id="btn-debug-toggle" title="小开关：一键开启人化模式并跳过每日定时等待，立即开始一轮浏览（调试/尝鲜用，刷新后自动关闭）">${debugMode ? '已开启' : '开启'}</button>
+            </div>
             <div class="row-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（刷新页面后自动关闭，人化开关仍由上方控制）</div>
             <div class="row row-human-opt ${humanMode?'':' hidden'}" id="human-options">
               <div class="row-human-opt-title">人化专属设置（开启后生效）</div>
@@ -2822,9 +2843,11 @@
             <div class="row-hint">留空或 0 = 跟随当前速度/概率预设；填数值立即生效并记忆，反检测随机性更强</div>
           </div>
           </div>
+          <div id="panel-actions">
           <button class="action-btn btn-start" id="btn-auto-start">开始自动浏览</button>
           <button class="action-btn btn-stop" id="btn-auto-stop" style="display:none;">停止运行</button>
           <button class="action-btn btn-clear" id="btn-clear-history">清除浏览记录</button>
+          </div>
           <div class="stats">
             <div class="stats-row"><span class="stats-label">状态</span><span class="stats-value"><span class="status-indicator stopped" id="status-dot"></span><span id="auto-status">未启动</span></span></div>
             <div class="stats-row"><span class="stats-label">页面类型</span><span class="stats-value" id="page-type">-</span></div>
@@ -2875,9 +2898,9 @@
         setHumanMode(e.target.dataset.human === 'true');
       }));
 
-      // 调试模式：开启时强制人化 + 立即开始（跳过每日定时等待），刷新后自动关闭
-      document.querySelectorAll('.debug-btn[data-debug]').forEach(btn => btn.addEventListener('click', (e) => {
-        const on = e.target.dataset.debug === 'true';
+      // 调试开人化：单个小开关按钮，点击切换；开启时强制人化 + 立即开始（跳过每日定时等待），刷新后自动关闭
+      document.getElementById('btn-debug-toggle').addEventListener('click', () => {
+        const on = !debugMode;
         setDebugMode(on);
         if (!on) return;
         if (this.isEnabled) {
@@ -2886,7 +2909,7 @@
           log('调试模式：立即开始一轮人化浏览（跳过每日定时等待）');
           this.start(true, true);
         }
-      }));
+      });
 
       const likeMainOnlyCheck = document.getElementById('like-main-only');
       likeMainOnlyCheck.checked = likeMainOnly;
@@ -3382,7 +3405,17 @@
       const stats = this.history.getStats();
       document.getElementById('session-viewed').textContent = stats.sessionViewed;
       document.getElementById('session-replies').textContent = stats.sessionReplies;
-      document.getElementById('session-liked').textContent = stats.sessionLiked;
+      // 【v2.7.5】点赞冷却中面板直接显示剩余分钟，不再静默吞赞
+      const likedEl = document.getElementById('session-liked');
+      if (likedEl) {
+        const until = parseInt(Storage.get('like_disabled_until', 0), 10) || 0;
+        if (Date.now() < until) {
+          const mins = Math.max(1, Math.ceil((until - Date.now()) / 60000));
+          likedEl.textContent = `${stats.sessionLiked}（冷却中 ${mins} 分）`;
+        } else {
+          likedEl.textContent = stats.sessionLiked;
+        }
+      }
       document.getElementById('session-read-count').textContent = readingTracker.count;
       // 目标进度：刷帖数 = 浏览的话题个数（翻楼/阅读楼层不计入目标）
       // 【v2.7.0 人化随机】人化模式下进度按今日接管目标（范围随机结果）显示
