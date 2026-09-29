@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.4
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计
+// @version      2.7.6
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、人化翻楼改百分比深度与行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -162,8 +162,9 @@
   // 【v2.7.4 修复 8be112f0 M2】非目标路径不再兜底 'latest'：若本页是列表页但路径不属于任何
   // 浏览目标（如 /top、/new 之外的定制视图），返回 null 让调用方跳过「本列表已扫」标记，
   // 否则 TopicListBrowser 一进 /top 就误标 latest 已扫，latest 在轮换里被跳过
-  function getCurrentListFromPath() {
-    const p = window.location.pathname;
+  // 从路径反推 list 目标 key（null = 非目标路径）。getCurrentListFromPath 读当前 URL，
+  // 【v2.7.6 组6 A1-M7】单独抽出 path 版本供 checkUrlChange 同型比对旧 URL 用
+  function listKeyFromPath(p) {
     if (isCategoryMode()) {
       // 分区 URL 可能存在 /c/xxx/N/l/latest 之类的子路径变体，前缀匹配兼容
       const target = getBrowseTargets().find(t => p === t.path || p.startsWith(t.path + '/'));
@@ -173,6 +174,26 @@
       if (LIST_OPTIONS[key].path === p) return key;
     }
     return null;
+  }
+
+  function getCurrentListFromPath() {
+    return listKeyFromPath(window.location.pathname);
+  }
+
+  // 读取当前有效的多开运行租约（单键）：null = 无主（无租约或已过期）。
+  // 【v2.7.6 组6】从双键（active_tab_id + active_tab_time）收敛为单键 JSON 租约，
+  // 避免「部分写入」竞态：心跳写 lease、CAS 读回校验，详见 LinuxDoAutomation.heartbeat/start
+  function readActiveLease() {
+    try {
+      const raw = Storage.get('linuxdo_lease', '');
+      if (!raw) return null;
+      const lease = JSON.parse(raw);
+      if (!lease || typeof lease.tabId === 'undefined') return null;
+      if (lease.expireAt && Date.now() >= lease.expireAt) return null;
+      return lease;
+    } catch (e) {
+      return null;
+    }
   }
 
   // 点赞开关
@@ -274,7 +295,12 @@
     },
 
     // 反检测：滚动步长随机抖动范围 (px)
-    get scrollJitter() { return Storage.get('adv_scroll_jitter', 0) || 60; },
+    // 【v2.7.6】人化接管：高级设置整块隐藏后不再读用户的 adv_scroll_jitter，
+    // 改为随每帖滚动缩放起伏（51~69px），避免「隐藏了设置却仍生效」的接管盲区
+    get scrollJitter() {
+      if (humanMode) return Math.round(60 * perTopicScrollScale);
+      return Storage.get('adv_scroll_jitter', 0) || 60;
+    },
 
     // 时间线「返回」按钮的最长等待时间 (ms)，等不到就留在原地读
     backButtonWaitTime: 2500,
@@ -313,9 +339,10 @@
     return 1.9 + Math.random() * 0.4;
   }
 
-  // 今日定时偏移（分钟，带方向）：真人每天不会准点上线，偏移带权重：
-  //   55% ±0~15 分   25% ±15~45 分   12% ±45~120 分
-  //   6% ±2~4 小时   2% ±4~8 小时（偶尔差大半天才上来）
+  // 今日定时偏移（分钟，带方向）：真人每天不会准点上线，偏移带权重（每档在 0~上限
+  // 内均匀取整分钟、方向随机——实现是 randomInt(0, max)，不是「±上限」双边均匀）：
+  //   55% 0~15 分   25% 0~45 分   12% 0~120 分
+  //   6% 0~4 小时   2% 0~8 小时（偶尔差大半天才上来）
   function drawSchedOffset() {
     const r = Math.random();
     let max;
@@ -337,6 +364,41 @@
     const from = Math.min(min, max) >= 1 ? Math.min(min, max) : 1;
     const to = Math.max(min, max);
     return randomInt(from, to);
+  }
+
+  // 【v2.7.6 人化分布·截断对数正态】构造标准正态 Z（Box-Muller）并返回截断对数正态样本：
+  // x = exp(ln(median) + sigma·Z)，夹在 [lo, hi]。真人行为分布多是「集中在基准附近、
+  // 偶发拖长」的左偏形态，均匀分布抽不出这种形状（形状本身就是统计指纹）
+  function logNormalTrunc(median, sigma, lo, hi) {
+    let u = 0, v = 0;
+    while (u === 0) u = Math.random();
+    while (v === 0) v = Math.random();
+    const z = Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    return clamp(Math.exp(Math.log(median) + sigma * z), lo, hi);
+  }
+
+  // 【v2.7.6 人化目标·多日自相关】每日目标抽取：60% 概率在昨日目标 ±少量内扰动
+  // （真人每天刷帖量有惯性，不会白噪声式天天跳变），40% 全新抽取（截断对数正态
+  // σ≈0.35，夹在用户设定 min~max 内）。返回后把本次结果存为 _prev 供次日参考
+  function drawAutocorrelatedTarget(key, lo, hi) {
+    const min = Math.max(0, Math.floor(Number(lo) || 0));
+    const max = Math.max(0, Math.floor(Number(hi) || 0));
+    if (max <= 0) return 0; // 上限 0 = 不限
+    const from = Math.max(1, Math.min(min, max));
+    const to = Math.max(from, max);
+    const prev = parseInt(Storage.get(`${key}_prev`, 0), 10) || 0;
+    let t;
+    if (prev >= from && prev <= to && Math.random() < 0.6) {
+      // 自相关：在昨日值 ±15% 相对幅度（至少 ±1）内扰动并夹回范围
+      const spread = Math.max(1, Math.round(prev * 0.15));
+      t = clamp(prev + randomInt(-spread, spread), from, to);
+    } else {
+      // 全新抽取：截断对数正态，中位取区间中点，σ≈0.35（左偏、偶发冲高更贴近真人）
+      const median = (from + to) / 2;
+      t = clamp(Math.round(logNormalTrunc(median, 0.35, from, to)), from, to);
+    }
+    Storage.set(`${key}_prev`, t);
+    return t;
   }
 
   // 一天一摇：按当天日期缓存当日配置，跨天自动重摇。
@@ -377,30 +439,57 @@
   let perTopicScrollScale = 1;      // 滚动步长缩放
   let perTopicTimeScale = 1;        // 翻页间隔/加载等待 缩放
   let perTopicFloorLimit = 0;       // 当前帖的翻楼上限（0=不限，整帖读完）
+  let perTopicFloorDepth = 0;       // 【v2.7.6】当前帖翻楼深度（占总楼数比例；0=不限）。
+                                    //   TopicBrowser.start 拿到总楼数后换算成 perTopicFloorLimit
   let perTopicGiveUpRatio = 0;      // 中途离场点（0=读完；>0 表示读到该帖该比例楼层即返回）
+  // 【v2.7.6 点赞根因修复】每帖只预摇一次「赞不赞、赞哪楼」：
+  //   0 = 本帖不赞（约 55%）；1 = 赞主楼（约 25%）；2 = 赞中后段某一楼（约 20%）。
+  // 旧实现 doesLike 对每一层楼独立掷骰，楼层一多「至少中一次」的概率爆炸、点赞预算
+  // 瞬间被长帖耗尽，导致后面整批帖子 0 赞；且概率是平均摊在每层上，真人却是「进帖前
+  // 心里已定赞不赞」——单帖单决策才像人，也保住每日点赞预算能覆盖到多帖。
+  let topicLikeChosen = 0;          // 本帖点赞决策（见上）
+  let topicLikeTargetFloor = 0;     // 2 档的点赞目标楼号（读到该楼且命中决策才赞）
   function refreshTopicParams() {
     if (!humanMode) return;
-    // 点赞概率 4 档加权：低5% 30% / 中15% 40% / 高25% 25% / 极高40% 5%
-    const r = Math.random();
-    if (r < 0.30) perTopicLikeChance = 0.05;
-    else if (r < 0.70) perTopicLikeChance = 0.15;
-    else if (r < 0.95) perTopicLikeChance = 0.25;
-    else perTopicLikeChance = 0.40;
+    // 点赞决策：55% 不赞 / 25% 赞主楼 / 20% 赞中后段某楼（目标楼 3~60 随机，长帖常在后段）
+    const lr = Math.random();
+    if (lr < 0.55) {
+      topicLikeChosen = 0;
+    } else if (lr < 0.80) {
+      topicLikeChosen = 1;
+    } else {
+      topicLikeChosen = 2;
+      topicLikeTargetFloor = randomInt(3, 60);
+    }
     // 阅读投入度：80% 的帖子在 0.7~1.3 之间起伏；约 20% 是「沉浸帖」，
     // 读到 1.6~2.4 倍时长（遇到感兴趣的长帖会读得明显更久，像真人一样）
     perTopicReadScale = Math.random() < 0.2 ? 1.6 + Math.random() * 0.8 : 0.7 + Math.random() * 0.6;
-    // 滚动/时间类 0.85~1.15（帖子难易、长短起伏）
+    // 滚动步长 0.85~1.15（帖子难易、长短起伏）；翻页间隔/加载等待等人化时间缩放
+    // 从均匀分布改截断对数正态（中位 1、σ0.3，夹 0.7~1.5）——真人节奏总是「多数接近
+    // 基准、偶发明显拖长」，均匀分布抽不出这种形态，形状本身就是统计指纹
     perTopicScrollScale = 0.85 + Math.random() * 0.3;
-    perTopicTimeScale = 0.85 + Math.random() * 0.3;
-    // 【v2.7.4 人化翻楼·每帖重抽】翻楼上限不再每天抽一次，改为每帖重抽：
-    // 真人点开不同帖子的耐心各不相同——热帖多看几楼、水帖划两下就走。
-    // 仍在用户设定的 min~max 范围内随机（0=不限，整帖读完），面板只负责配置范围。
-    perTopicFloorLimit = drawRangeTarget(
-      Storage.get('human_floor_min', 0),
-      Storage.get('human_floor_max', 0)
-    );
-    // 中途离场：约 15% 的帖子读到 55%~85% 楼层就返回列表（真人很少帖帖读完）
-    perTopicGiveUpRatio = Math.random() < 0.15 ? 0.55 + Math.random() * 0.3 : 0;
+    perTopicTimeScale = logNormalTrunc(1, 0.3, 0.7, 1.5);
+    // 【v2.7.6 人化翻楼·每帖重抽（百分比深度）】翻楼上限改为按「占总楼数的比例」抽取：
+    //   1) depth = 截断对数正态（中位 55%、σ0.5，夹 0.2~1.0）
+    //   2) 再夹进面板 min~max 百分比（默认 30~100；上限 0=不限整帖读完）
+    //   3) 实际翻楼楼数 = depth × 话题总楼数（TopicBrowser.start 拿到总数后换算成
+    //      perTopicFloorLimit，isOverFloorLimit 仍按绝对楼层比较）
+    // 旧实现按绝对楼层抽：两三楼的短帖一下就读完（每帖都全读），几百楼的深水帖又永远
+    // 读不到底（固定绝对楼数）。比例化后短帖长帖的阅读深度一致，才符合「热帖多读几楼、
+    // 水帖划两下就走」的真人耐心模式
+    const floorMinPct = Math.max(0, Math.floor(Number(Storage.get('human_floor_min', 30)) || 0));
+    const floorMaxPct = Math.max(0, Math.floor(Number(Storage.get('human_floor_max', 100)) || 0));
+    if (floorMaxPct <= 0) {
+      perTopicFloorDepth = 0;   // 上限 0 = 不限（整帖读完）
+    } else {
+      const lo = Math.max(0.2, floorMinPct / 100);
+      const hi = Math.min(1.0, floorMaxPct / 100);
+      perTopicFloorDepth = logNormalTrunc(0.55, 0.5, lo, hi);
+    }
+    // 【v2.7.6 中途离场】概率从 15% 提高到 30~40%（真人多数帖子不会帖帖读完），
+    // 离场点从固定「55%~85% 中段」铺开到 25%~95%（有的帖翻几下就走、有的快读完才走，
+    // 集中在中段是设定感/机器指纹）
+    perTopicGiveUpRatio = Math.random() < 0.35 ? 0.25 + Math.random() * 0.7 : 0;
   }
 
   // 每日配置的时间段 → 定时基准时刻。真人不会固定同一个点上线，
@@ -490,8 +579,8 @@
     const topicHi = Storage.get('human_topic_max', 50);
     const likeLo = Storage.get('human_like_min', 10);
     const likeHi = Storage.get('human_like_max', 20);
-    Storage.set('human_topic_target', drawRangeTarget(topicLo, topicHi));
-    Storage.set('human_like_target', drawRangeTarget(likeLo, likeHi));
+    Storage.set('human_topic_target', drawAutocorrelatedTarget('human_topic_target', topicLo, topicHi));
+    Storage.set('human_like_target', drawAutocorrelatedTarget('human_like_target', likeLo, likeHi));
     // 提交标记：全部参数落盘之后才写 human_day（验证认领仍未易主——生成期间被其他
     // 标签抢走认领则放弃本次结果，避免半套参数被当作当日配置）；随即释放认领
     if (Storage.get('human_profile_claim') !== claimToken) return;
@@ -585,6 +674,14 @@
     }
     // 调试时联动控制台日志：看不到过程日志的调试毫无意义（修复：调试开关与 CONFIG.debug 脱节）
     CONFIG.debug = debugMode;
+    // 【v2.7.6 调试×刷新】TTL 标记：调试开启时写 debug_active_until（默认 30 分钟有效期），
+    // 刷新页面后 setup() 用它自动恢复「调试中」状态并续跑一轮（不写 auto_running，避免
+    // 与「持久自动运行」混为一谈）；关闭/正常结束时清除
+    if (debugMode) {
+      Storage.set('debug_active_until', String(Date.now() + 30 * 60 * 1000));
+    } else {
+      Storage.remove('debug_active_until');
+    }
     if (debugMode) {
       debugPrevHumanMode = humanMode;
       setHumanMode(true); // 强制人化：接管速度/定时/目标/高级设置
@@ -661,7 +758,13 @@
   // 显示人化专属设置区（时段+目标范围+时长）；关掉时恢复
   function syncPanelHumanVisibility() {
     if (typeof document === 'undefined' || !document.getElementById) return;
+    // 被人化接管的设置行整体隐藏；其下的说明行（hint）也一并隐藏，避免给人化模式下
+    // 不生效的说明（A5-M3：手动楼层说明在人化下仍显示，易误导）
     ['speed', 'schedule', 'goal', 'advanced', 'floor'].forEach(k => {
+      const el = document.getElementById(`human-hide-${k}`);
+      if (el) el.classList.toggle('hidden', humanMode);
+    });
+    ['floor-hint', 'goal-hint'].forEach(k => {
       const el = document.getElementById(`human-hide-${k}`);
       if (el) el.classList.toggle('hidden', humanMode);
     });
@@ -671,12 +774,14 @@
     if (chanceRow) chanceRow.classList.toggle('hidden', humanMode || !enableLike);
     const box = document.getElementById('human-options');
     if (box) box.classList.toggle('hidden', !humanMode);
-    // 【v2.7.5】人化模式下隐藏底部操作按钮（开始自动浏览/停止运行/清除浏览记录）：
-    // 人化模式的开始时机由每日时段随机控制，手动「开始自动浏览」按钮会误导用户
-    // 以为需要/可以手动触发（「时间是人化控制的」），一并隐藏避免误操作。
-    // 用包裹容器整体隐藏，避免覆盖 btn-auto-stop 的行内 display:none 默认态（运行生命周期管理它）
-    const actions = document.getElementById('panel-actions');
-    if (actions) actions.style.display = humanMode ? 'none' : '';
+    // 【v2.7.6 修复 A4-H2】人化模式下只隐藏「开始自动浏览」按钮：人化模式的开始时机由
+    // 每日时段随机控制，手动「开始」按钮会误导用户；但「停止运行」按钮必须始终可见——
+    // 人化轮次运行中用户随时可能想停，整体隐藏 panel-actions 会让运行中的脚本无法手动停止
+    // （旧实现整容器隐藏，折叠面板只留了一个还原锚点，观感差且操作路径深）
+    const startBtn = document.getElementById('btn-auto-start');
+    if (startBtn) startBtn.style.display = humanMode ? 'none' : '';
+    const stopBtn = document.getElementById('btn-auto-stop');
+    if (stopBtn) stopBtn.style.display = ''; // 恒可见（行内 display 由运行生命周期管理）
   }
 
   function setList(listType) {
@@ -721,12 +826,18 @@
 
   // 处理点赞限制：点赞走 API 直连（sendLikeRequest）或页面真实按钮，命中 429/rate_limit 时调用。
   // 【v2.7.3 修复】不再永久关闭点赞开关——一次限流就把 enable_like 落盘为 false，会导致之后
-  // 所有会话（含人化模式）永不点赞、面板恒 0，且用户无从得知开关被自动关掉。改为 30 分钟
-  // 临时冷却：写入 like_disabled_until，shouldLike 在冷却期内跳过点赞，到期自动恢复。
+  // 所有会话（含人化模式）永不点赞、面板恒 0，且用户无从得知开关被自动关掉。改为临时冷却：
+  // 写入 like_disabled_until，shouldLike 在冷却期内跳过点赞，到期自动恢复。
+  // 【v2.7.6 修复 A2-L2】冷却时长改为递减退避：连续撞 429 按 5→15→30 分钟逐级拉长
+  // （like_limit_strike 计数，点赞成功即归零，见 tryLikePost）——偶发一次限流（如 boost
+  // 公式自造的点赞雪崩）不该一罚就是 30 分钟整段停摆，给短冷却让它自愈更贴近真人容错
   function handleLikeLimit() {
-    const until = Date.now() + 30 * 60 * 1000;
+    const strike = Math.min(3, (parseInt(Storage.get('like_limit_strike', 0), 10) || 0) + 1);
+    Storage.set('like_limit_strike', strike);
+    const minutes = [5, 15, 30][strike - 1];
+    const until = Date.now() + minutes * 60 * 1000;
     Storage.set('like_disabled_until', until);
-    log('点赞被限流：暂停点赞 30 分钟（到期自动恢复，无需手动开关）');
+    log(`点赞被限流：暂停点赞 ${minutes} 分钟（第 ${strike} 次递退，到期自动恢复）`);
   }
 
   function setLikeChance(preset) {
@@ -1123,15 +1234,16 @@
   // 数据迁移：v2.1.1 起 liked_posts 的键从话题内楼层序号改为全局 post id，
   // 旧键在新逻辑下全部失配（脏数据），一次性清空，避免重访旧话题时把已点赞的帖子误 toggle 取消
   // （viewed_topics 存的一直是话题 id，语义未变，保留不动）
-  // 【v2.7.4】只在实际存在旧格式键时才清：旧键形如「话题id:楼层」（非纯数字）。
-  // 若只是版本号缺失（全新环境/存储被清空）而 liked_posts 本来就是新格式，
-  // 直接重跑清空会把用户已有的点赞去重记录误删（fb052830 L9）
+  // 【v2.7.6 修复 H3】只在实际存在旧格式键时才清：旧键形如「话题id:楼层」（非纯数字）。
+  // 版本号缺失（storedVersion===0）不再作为清空条件——v2.1.1~v2.7.3 期间直跳新版的
+  // 用户 liked_posts 本就是新格式（全局 post id），仅因当时没写 storage_version 而被
+  // 旧逻辑误判重置，把已有点赞去重记录整批清掉（fb052830 L9 修复被 ||storedVersion===0 推翻）
   const STORAGE_VERSION = 2;
   const storedVersion = Storage.get('storage_version', 0);
   if (storedVersion < STORAGE_VERSION) {
     const liked = Storage.get('liked_posts', []);
     const hasLegacyKeys = Array.isArray(liked) && liked.some(k => !/^\d+$/.test(String(k)));
-    if (hasLegacyKeys || storedVersion === 0) {
+    if (hasLegacyKeys) {
       Storage.set('liked_posts', []);
     }
     Storage.set('storage_version', STORAGE_VERSION);
@@ -1166,6 +1278,9 @@
       // 跨整页跳转持久化、resetSession 时清空。与全局 viewed 历史解耦——之前会话读过的话题
       // 本会话再读也计入，不再被跨会话持久化的 viewed 集合吞掉计数
       this.sessionSeenTopics = new Set(Storage.get('session_seen_topics', []));
+      // 【v2.7.6 组6】已计入回复量的 (topicId:floor) 键集合：重启/换页后重读同一楼层
+      // 不重复计入回复量（A1-M4；键格式与 ReadingTracker.addFloor 的 ${topicId}:${floor} 一致）
+      this.sessionReplyKeys = new Set(Storage.get('session_reply_keys', []));
       // 节流写入的定时器句柄，避免每标记一条就全量序列化落盘
       this.saveTimer = null;
     }
@@ -1211,7 +1326,14 @@
       }
     }
 
-    addReplyViewed() {
+    // 【v2.7.6 组6】回复量计入改为 (topicId, floor) 去重键：重启/换页后重读同一楼层
+    // 不重复计入（A1-M4）。跨整页跳转持久化（session_reply_keys）、resetSession 清空
+    addReplyViewed(topicId, floor) {
+      const key = `${topicId}:${floor}`;
+      if (this.sessionReplyKeys.has(key)) return;
+      this.sessionReplyKeys.add(key);
+      trimSet(this.sessionReplyKeys, MAX_HISTORY);
+      Storage.set('session_reply_keys', [...this.sessionReplyKeys]);
       this.sessionReplies++;
       Storage.set('session_replies', this.sessionReplies);
       this.totalReplies++;
@@ -1227,11 +1349,13 @@
       this.sessionLiked = 0;
       this.sessionReplies = 0;
       this.sessionSeenTopics.clear();
+      this.sessionReplyKeys.clear();
       Storage.set('session_epoch', this.sessionEpoch);
       Storage.set('session_viewed', 0);
       Storage.set('session_liked', 0);
       Storage.set('session_replies', 0);
       Storage.set('session_seen_topics', []);
+      Storage.set('session_reply_keys', []);
       log('新一轮会话开始（计数已清零）');
     }
 
@@ -1461,6 +1585,13 @@
       this.scrollController = new ScrollController();
       this.isRunning = false;
       this.viewedPosts = new Set();
+      // 【v2.7.6 点赞根因修复】每帖首个可见楼层的滚入视口时刻：替代 enteredAt 4s 一次性判定
+      // （短帖/首屏在进入后 4 秒内就读完，旧判定把所有首屏楼层全部挡掉 → 0 赞）
+      this.postSeenAt = new Map();
+      // 因 4 秒门限暂缓点赞的楼层：等停留时间足够后再补判，不再一次性放弃
+      this.likePending = new Set();
+      // 本帖已成功点过赞（人化每帖单点决策：一帖最多一赞）
+      this.topicLiked = false;
       this.lastLikeTime = 0;
       // 进入本帖时的已读楼层号，「只计未读」时以它为计数起点
       this.floorBaseline = 0;
@@ -1500,6 +1631,12 @@
       // 该帖实际总楼层数：用作滚动/等待的硬上限，帖子只有 2 楼就不会白等到「不存在的第 3 楼」
       this.topicTotalPosts = getTopicTotalPosts(topicId);
       if (this.topicTotalPosts > 0) {
+        // 【v2.7.6 人化翻楼·百分比深度】refreshTopicParams 已抽好本帖深度比例
+        // （perTopicFloorDepth，0=不限），拿到总楼数后换算成绝对楼层上限：
+        // 短帖按比例少读几楼、长帖按比例深读，阅读深度对长短帖一致
+        if (humanMode && perTopicFloorDepth > 0) {
+          perTopicFloorLimit = Math.max(1, Math.round(this.topicTotalPosts * perTopicFloorDepth));
+        }
         // 【v2.7.3 人化翻楼】人化下用每日翻楼目标（0=不限），非人化用手设 floorLimit
         const floorCap = humanMode ? humanFloorTarget() : floorLimit;
         log(`话题共 ${this.topicTotalPosts} 楼${floorCap > 0 && this.topicTotalPosts < floorCap ? `（小于楼层上限 ${floorCap}，读完即换帖）` : ''}`);
@@ -1586,6 +1723,21 @@
       while (this.isRunning) {
         try {
           await this.processVisiblePosts();
+          // 【v2.7.6 点赞根因修复】补判暂缓点赞：首见满 4 秒的楼层补一次决策机会
+          // （旧实现进帖 4 秒一次性判定后不再补，短帖/首屏被吞 → 0 赞根因之一）
+          if (this.likePending.size > 0) {
+            for (const pid of [...this.likePending]) {
+              if (!this.isRunning) break;
+              const seenAt = this.postSeenAt.get(pid) || this.enteredAt;
+              if (Date.now() - seenAt >= 4000) {
+                this.likePending.delete(pid);
+                const el = document.getElementById(`post_${pid}`);
+                if (el && this.shouldLike(el, pid)) {
+                  await this.tryLikePost(el, pid);
+                }
+              }
+            }
+          }
           this.onStatsUpdate?.();
 
           if (this.floorLimitReached) break;
@@ -1667,6 +1819,10 @@
         // getBoundingClientRect 触发强制回流（帖子越多浪费越大）
         if (rect.top >= viewportHeight) break;
         if (rect.top < viewportHeight * 0.9 && rect.bottom > viewportHeight * 0.1) {
+          // 【v2.7.6 点赞根因修复】记录该帖首个可见楼层的滚入视口时刻：点赞 4 秒门限
+          // 按「该帖自己首次可见」计，而非浏览器实例创建时刻 enteredAt——短帖/首屏
+          // 在读完全部楼层时往往还不满 4 秒，旧判定把整个首屏的点赞机会全部吞掉
+          if (!this.postSeenAt.has(postId)) this.postSeenAt.set(postId, Date.now());
           // article 的 id 编号就是话题内楼层序号（post_12 即第 12 楼），到限额就收工换下一帖
           const floor = Number(postId);
           if (this.isOverFloorLimit(floor)) {
@@ -1683,7 +1839,7 @@
           // 不再虚增 sessionReplies、不再重复计入阅读、也不当作「新浏览的帖子」标记
           if (floor > this.floorBaseline) {
             this.unreadFloorsRead++;
-            this.history.addReplyViewed();
+            this.history.addReplyViewed(getCurrentTopicId(), floor);
             // 【反检测 v2.6.9】阅读楼层统计改为 DOM 来源（不再拦截网络上报）
             readingTracker.addFloor(getCurrentTopicId(), floor);
             // 【v2.7.4 修复 d6a2816c L3】仅当本帖有未读楼层真正被读过时才标记「已浏览」
@@ -1702,10 +1858,23 @@
             const textLen = cooked ? cooked.textContent.trim().length : 0;
             const base = contentReadDelay(textLen);
             await humanDelay(base, Math.round(base * 1.3) + 1);
+            // 【v2.7.6 组6】阅读停留后若已被 stop/重启取代，立即放弃本楼后续动作
+            if (!this.isRunning) break;
           }
 
-          if (this.shouldLike(post)) {
-            await this.tryLikePost(post, postId);
+          // 【v2.7.6 点赞根因修复】4 秒门限按「该帖首个可见楼层的首见时刻」计（postSeenAt）：
+          // 首见未满 4 秒的楼层不立刻点赞，挂进 likePending 由 browseAllReplies 后续轮次补判。
+          // 旧实现按 enteredAt（浏览器实例创建时刻）一次性判定，短帖/首屏进入后 4 秒内
+          // 就读完全部楼层 → 整片点赞机会被吞掉（0 赞根因之一）
+          const seenAt = this.postSeenAt.get(postId) || this.enteredAt;
+          if (Date.now() - seenAt >= 4000) {
+            if (this.shouldLike(post, postId)) {
+              await this.tryLikePost(post, postId);
+              // 【v2.7.6 组6】点赞动作（含随机停顿+轮询）后检查运行状态，被取代则收手
+              if (!this.isRunning) break;
+            }
+          } else {
+            this.likePending.add(postId);
           }
         }
       }
@@ -1723,21 +1892,23 @@
       return Number.isFinite(floor) && floor > limit;
     }
 
-    shouldLike(postElement) {
+    shouldLike(postElement, postId) {
       if (!enableLike) return false;
-      // 【v2.7.4 修复 d6a2816c M4】点赞时机门槛：进帖未满 4 秒、或帖子还没滚过/读完
-      // （首屏之外还有内容且没滚动）时不点赞——真人不可能点开帖子 1~3 秒、内容未看就
-      // 决定点赞。一屏就能读完的短帖（maxFloorSeen 已达总楼数）不受滚动门槛限制。
-      // 注意: enteredAt 在 start() 创建浏览器实例时记录，短帖读完时一般已超 4 秒
-      if (Date.now() - this.enteredAt < 4000) return false;
+      // 【v2.7.6 点赞根因修复】4 秒门限改按「该帖首个可见楼层的首见时刻」计（postSeenAt）：
+      // 短帖/首屏在读完全部楼层时往往还不满 4 秒，旧判定（enteredAt=浏览器实例创建时刻）
+      // 会把整个首屏的点赞机会全部吞掉 → 0 赞。不满 4 秒的楼层由 processVisiblePosts
+      // 挂进 likePending，够时后由 browseAllReplies 补判，不再一次性放弃
+      if (Date.now() - (this.postSeenAt.get(postId || '') || this.enteredAt) < 4000) return false;
       const fullySeen = this.topicTotalPosts > 0 && this.maxFloorSeen >= this.topicTotalPosts;
       if (this.scrollsDone < 1 && !fullySeen) return false;
       // 【v2.7.3 修复】429 限流冷却期内跳过点赞（handleLikeLimit 写入 like_disabled_until，
-      // 30 分钟自动恢复；冷却期内即使开关开着也不点赞，避免继续触发风控）
+      // 递减退避 5→15→30 分钟自动恢复；冷却期内即使开关开着也不点赞，避免继续触发风控）
       if (Date.now() < (parseInt(Storage.get('like_disabled_until', 0), 10) || 0)) return false;
       // 只赞主帖：跳过回复楼层（Discourse 楼主帖的 article id 恒为 post_1）
       if (likeMainOnly && postElement && postElement.id !== 'post_1') return false;
       if (CONFIG.maxLikesPerSession > 0 && this.history.sessionLiked >= CONFIG.maxLikesPerSession) return false;
+      // 【v2.7.6】本帖已成功点过赞：人化单点决策，不再二次放行
+      if (this.topicLiked) return false;
       const now = Date.now();
       const elapsed = now - this.lastLikeTime;
       // 【反检测 v2.6.9】点赞间隔不再设「绝不下限」的硬门槛：真人的点赞间隔分布里
@@ -1747,19 +1918,24 @@
       if (elapsed < CONFIG.minLikeInterval) {
         if (!(elapsed >= 400 && Math.random() < 0.08)) return false;
       }
-      // 【v2.7.3 目标自适应】人化模式下按今日目标预算动态抬高点赞概率：剩余赞数 /
-      // 剩余浏览目标（帖），算「每帖还需点几个赞」的平均需求，与每帖抽签概率取大者——
-      // 目标 12 赞/30 帖时平均需求 0.4，若只按基础抽签（均值约 13.5%）要读 90 帖才能点满，
-      // 按需求加成后 30 帖左右就能达成，也符合「浏览目标内自然点满」的人设
+      // 【v2.7.6 点赞根因修复】人化改为「每帖一次决策」：refreshTopicParams 进帖时已预抽
+      // topicLikeChosen（0=本帖不赞约55% / 1=赞主楼约25% / 2=赞中后段某楼约20%）。
+      // 旧实现（v2.7.3 目标自适应）对每一层楼独立掷骰 + 按剩余预算动态抬高概率：
+      //   ① 楼层一多「至少中一次」的概率爆炸，点赞预算被长帖瞬间耗尽 → 后面整批帖子 0 赞
+      //   ② 概率逐楼平均摊开，真人却是「进帖前心里已定赞不赞」——单帖单决策才像人
       if (humanMode) {
+        // 预算兜底：剩余赞目标 ≥ 剩余浏览目标数（不补就达不成每日赞目标）时强制赞主楼
         const likeGoal = CONFIG.maxLikesPerSession;    // 人化下 = humanLikeTarget()，0=不限
         const topicGoal = CONFIG.maxTopicsPerSession;  // 人化下 = humanTopicTarget()，0=不限
-        if (likeGoal > 0 && topicGoal > 0) {
-          const remainingLikes = Math.max(0, likeGoal - this.history.sessionLiked);
-          const remainingTopics = Math.max(1, topicGoal - this.history.sessionViewed);
-          const needed = clamp(remainingLikes / remainingTopics, 0, 0.6);
-          return Math.random() < Math.max(CONFIG.likeChance, needed);
+        if (likeGoal > 0 && topicGoal > 0 &&
+            likeGoal - this.history.sessionLiked >= topicGoal - this.history.sessionViewed) {
+          return !!(postElement && postElement.id === 'post_1');
         }
+        if (topicLikeChosen === 0) return false;   // 本帖预抽为不赞
+        if (topicLikeChosen === 1) return !!(postElement && postElement.id === 'post_1');
+        // 2 = 赞中后段某楼：读到目标楼（topicLikeTargetFloor）且该楼未赞过才放行
+        const floor = Number(postId);
+        return floor > 0 && floor >= topicLikeTargetFloor;
       }
       return Math.random() < CONFIG.likeChance;
     }
@@ -1795,13 +1971,16 @@
         // 「犹豫/重新考虑」长停顿——真人在点开赞前常会悬停考虑一下
         if (Math.random() < 0.10) {
           await humanDelay(1500, 3000);
+          if (!this.isRunning) return false;
         }
         await humanDelay(300, 900);
+        if (!this.isRunning) return false;
 
         // 【反检测 v2.7.0】点赞一律走「点击页面真实按钮」：由页面自身 JS 发出带完整
         // 头部的原生请求，与真人点击产生的网络流量完全一致（机器人直接 fetch 会暴露
         // 非浏览器指纹的特征）。按钮缺失（罕见）才退回 API 兜底。
         const clicked = await this.clickLikeButton(postElement);
+        if (!this.isRunning) return false;
         let result;
         if (clicked.success) {
           // 点击成功（或本就已赞）：直接记成功，绝不再发 toggle 取消它
@@ -1817,6 +1996,10 @@
 
         if (result.success) {
           this.history.markPostLiked(actualPostId);
+          // 【v2.7.6】本帖已点过赞：人化单点决策后续楼层不再重复；同时点赞成功即清零
+          // 429 递退计数（连续撞限流才逐级加长冷却，成功一次视为风控已缓解）
+          this.topicLiked = true;
+          Storage.set('like_limit_strike', 0);
           this.lastLikeTime = Date.now();
           this.onStatsUpdate?.();
           log(`点赞帖子 #${postId} (id=${actualPostId})`);
@@ -1862,7 +2045,11 @@
         });
         // 候选全被滤掉 = 该帖本就被赞过（或按钮全部带已赞态）：直接按已赞处理，避免误 toggle
         if (!candidates.length) return { success: true, already: true, noButton: false };
-        const btn = candidates[Math.floor(Math.random() * candidates.length)];
+        // 【v2.7.6 修复 A2-H2】主按钮优先：btn-toggle-reaction-like 是 Discourse reactions 的
+        // 默认主反应（心形赞），优先点它；emoji 自定义反应按钮（discourse-reactions-reaction-button）
+        // 点赞不计入 heart 数量，旧实现随机 pick 可能点到它 → 「点了却没点赞」的 0 赞假象
+        const mainBtn = candidates.find(btn => btn.classList.contains('btn-toggle-reaction-like'));
+        const btn = mainBtn || candidates[Math.floor(Math.random() * candidates.length)];
         // 模拟真人：滚动到视野中央 → 悬停 → 点击
         btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
         await humanDelay(300, 900);
@@ -1898,8 +2085,21 @@
           await new Promise(resolve => setTimeout(resolve, 300));
           liked = likedState();
         }
-        // 点了真实按钮（即便 3s 内没能确认）：也按成功返回，调用方记成功——真实点击的
-        // 请求已经发出，绝不能再发 toggle 去取消它；确认不到多半是 Ember 渲染延迟
+        // 【v2.7.6 修复 A2-M】3s 内没确认到已赞态：按钮仍挂在 DOM（isConnected）上就补点
+        // 最多 2 次（每次间隔 1s 复查）——旧实现点击后等 3s 没确认也直接按成功返回，
+        // 若点击因 Ember 重渲染/事件未挂上而没生效，就成了永不确认的「假成功」→ 实际 0 赞。
+        // 确认不到（按钮已消失/仍无已赞态）才按成功返回：真实点击的请求已发出，绝不能再
+        // 发 toggle 去取消它（那会造成双倍请求和 429）
+        let retries = 0;
+        while (!liked && btn.isConnected && retries < 2) {
+          retries++;
+          btn.click();
+          const retryDeadline = Date.now() + 1500;
+          while (!liked && Date.now() < retryDeadline) {
+            await new Promise(resolve => setTimeout(resolve, 300));
+            liked = likedState();
+          }
+        }
         return { success: true, confirmed: liked, noButton: false };
       } catch (e) {
         return { success: false, noButton: false };
@@ -1987,9 +2187,20 @@
       this.scannedLists = new Set(
         savedEpoch === this.history.sessionEpoch ? Storage.get('session_scanned_lists', []) : []
       );
-      // 【v2.7.4 修复 8be112f0 M2】当前页不在任何浏览目标（getCurrentListFromPath 返回 null）
-      // 时不标记任何列表为已扫：路径不是目标时不该消费掉一个目标列表的轮换名额
-      if (currentListKey) this.scannedLists.add(currentListKey);
+      // 【v2.7.6 组6 A1-M5】目标页验证 + 落盘后置：上一脚本实例的切换意图
+      // （session_pending_list）与本页实际路径反推的 key 一致才确认切换成功，计入已扫
+      // 并持久化；不一致（跳转被拦截/重定向）则只记实到列表，意图列表保留待下次轮换。
+      // 无论哪种都立即落盘，让轮换状态跨整页跳转不丢
+      const pendingListKey = Storage.get('session_pending_list', '');
+      Storage.remove('session_pending_list');
+      if (currentListKey) {
+        this.scannedLists.add(currentListKey);
+        if (pendingListKey && pendingListKey !== currentListKey) {
+          log(`列表切换被重定向：意图 ${pendingListKey}，实际落在 ${currentListKey}`);
+        }
+        Storage.set('session_scanned_lists', [...this.scannedLists]);
+        Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
+      }
     }
 
     async start() {
@@ -2152,10 +2363,11 @@
         this.onFinished?.('列表已尽');
         return;
       }
-      this.scannedLists.add(next.key);
-      // 跳转前落盘：目的页脚本重新注入后靠 epoch 恢复集合，继续轮换
-      Storage.set('session_scanned_lists', [...this.scannedLists]);
-      Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
+      // 【v2.7.6 组6 A1-M5】跳转前不再 add+落盘：先写切换意图（session_pending_list），
+      // 由新页 TopicListBrowser ctor 用 getCurrentListFromPath() 验证实到列表后才标记已扫。
+      // 旧实现在跳转前就把 next.key 记入 scannedLists 并落盘——若跳转失败/被重定向，
+      // 该列表被永久误标已扫，轮换里永远不再访问
+      Storage.set('session_pending_list', next.key);
       log(`切换到列表: ${next.name}`);
       await humanDelay(1000, 2000);
       window.location.href = next.path;
@@ -2183,14 +2395,26 @@
       // 旧世代的浏览器在 start() 返回后若发现已被取代则立即停掉，其 onFinished 也
       // 只在仍是最新世代时才放行 finishRun
       this.runGeneration = 0;
+      // 【v2.7.6 组6】本实例的运行租约令牌：启动时与 storage 中的租约 CAS 比对，
+      // 区分「这是我写的心跳」与「另一标签页写的心跳」，杜绝双页同跑
+      this.leaseToken = '';
     }
 
-    // 附带防多开心跳记录
+    // 附带防多开心跳记录：单键租约 {tabId, token, expireAt}，CAS 用法见 start()
     heartbeat() {
       this.lastActivityTime = Date.now();
       if (this.isEnabled) {
-        Storage.set('linuxdo_active_tab_id', TAB_ID);
-        Storage.set('linuxdo_active_tab_time', this.lastActivityTime);
+        // 【v2.7.6 组6】双键 → 单键租约 JSON：tabId 归属 + token 自我标识 + expireAt 失效时刻。
+        // 旧双键（active_tab_id/active_tab_time）的读取点已全部收敛到 readActiveLease()
+        try {
+          Storage.set('linuxdo_lease', JSON.stringify({
+            tabId: TAB_ID,
+            token: this.leaseToken,
+            expireAt: Date.now() + 90 * 1000
+          }));
+        } catch (e) {
+          // localStorage 满等异常不阻断运行
+        }
       }
     }
 
@@ -2210,7 +2434,12 @@
       const now = Date.now();
       const elapsed = now - this.lastActivityTime;
 
-      if (elapsed > this.stuckTimeout) {
+      // 【v2.7.6 组6】卡死阈值按人化节奏 τ 放大：τ>1 时停顿更长更稀疏（阅读/分心叠加），
+      // 固定 60s 阈值在快节奏档位（τ<1）下依然偏松，但宁可放宽不可误判卡死重启空转
+      const stuckMs = humanMode
+        ? Math.round(this.stuckTimeout * (parseFloat(Storage.get('human_tempo', '1')) || 1))
+        : this.stuckTimeout;
+      if (elapsed > stuckMs) {
         log(`检测到卡住 (${Math.round(elapsed/1000)}秒无活动)，自动重启...`);
         this.restartBrowsing();
       }
@@ -2306,15 +2535,41 @@
     checkUrlChange() {
       const currentUrl = window.location.href;
       if (currentUrl !== this.lastUrl) {
-        const oldPageType = this.getPageTypeFromUrl(this.lastUrl);
+        const oldUrl = this.lastUrl;
+        const oldPageType = this.getPageTypeFromUrl(oldUrl);
         const newPageType = getPageType();
         this.lastUrl = currentUrl;
 
         const pageTypeEl = document.getElementById('page-type');
         if (pageTypeEl) pageTypeEl.textContent = newPageType;
 
-        if (this.isEnabled && oldPageType !== newPageType) {
+        if (!this.isEnabled) return;
+
+        // 页面类型变化：正常接管换浏览器
+        if (oldPageType !== newPageType) {
           this.handlePageTypeChange(newPageType);
+          return;
+        }
+        // 【v2.7.6 组6 A1-M7】同型跳转也要接管：topic→topic / list→list 的 SPA
+        // 导航 pageType 不变但实体变了（换了一个话题/换了一个列表），旧浏览器仍按
+        // 旧 URL 的实体在跑。逐类比对实体 id/key，变了就重启浏览
+        if (oldPageType === 'topic') {
+          const oldTopicId = getTopicIdFromUrl(oldUrl);
+          const newTopicId = getCurrentTopicId();
+          if (oldTopicId !== newTopicId) {
+            log(`检测到话题切换（${oldTopicId} → ${newTopicId}），重启浏览`);
+            this.handlePageTypeChange(newPageType);
+          }
+        } else if (oldPageType === 'list') {
+          let oldListKey = null;
+          try {
+            oldListKey = listKeyFromPath(new URL(oldUrl).pathname);
+          } catch (e) { /* 非法 URL 视作非目标 */ }
+          const newListKey = getCurrentListFromPath();
+          if (oldListKey !== newListKey) {
+            log('检测到列表切换，重启浏览');
+            this.handlePageTypeChange(newPageType);
+          }
         }
       }
     }
@@ -2383,21 +2638,30 @@
         document.getElementById('auto-status').textContent = `上次结束：${lastFinishReason}`;
       }
 
-      const autoResume = Storage.get('auto_running', false);
+      // 【v2.7.6 调试×刷新】自动恢复条件扩为两种：持久自动运行（auto_running）或调试中
+      // （debug_active_until 未过期，刷新后恢复调试状态并续跑，见 setDebugMode 的 TTL 标记）
+      const autoResume = Storage.get('auto_running', false) ||
+        (parseInt(Storage.get('debug_active_until', '0'), 10) || 0) > Date.now();
 
       if (autoResume) {
         // --- 核心修复：防止多开无限自启动 ---
-        const lastActiveTime = Storage.get('linuxdo_active_tab_time', 0);
-        const activeTabId = Storage.get('linuxdo_active_tab_id', null);
+        // 【v2.7.6 组6】读单键租约判断他页是否持锁（90 秒窗口内、非本页即占用）
+        const lease = readActiveLease();
 
         // 如果在90秒内有其他标签页活动，且不是当前标签页，放弃自启
         // （与 start() 的多开租约阈值保持一致；旧 15s 只覆盖短心跳窗口，后台标签页
         // 节流时会被误判为「无活跃」而重复自启）
-        if (Date.now() - lastActiveTime < 90000 && activeTabId !== TAB_ID) {
+        if (lease && lease.tabId !== TAB_ID) {
             log('🚫 检测到其他标签页正在运行自动浏览，当前页面取消自动恢复');
             this.updateStats();
             document.getElementById('auto-status').textContent = '多开限制，未自启';
             return;
+        }
+
+        // 【v2.7.6 调试×刷新】若恢复来源是调试 TTL：先恢复调试态（强制人化+控制台日志），
+        // 再走统一恢复路径——start() 不传 resetSessionFlag，会话计数在刷新后延续
+        if (!Storage.get('auto_running', false) && debugMode === false) {
+          setDebugMode(true);
         }
 
         log('检测到自动运行状态，恢复运行...');
@@ -2492,6 +2756,9 @@
         #linuxdo-auto-panel .row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
         #linuxdo-auto-panel .row.hidden { display: none; }
         #linuxdo-auto-panel .row-label { flex: none; width: 28px; font-size: 12px; color: rgba(255,255,255,0.72); }
+        /* 【v2.7.6】「人化随机」「调试开人化」等 4~5 字标签在窄面板换行错位，显式收紧 */
+        #linuxdo-auto-panel .row-human .row-label,
+        #linuxdo-auto-panel .row-debug .row-label { width: auto; min-width: 56px; white-space: nowrap; }
         #linuxdo-auto-panel .seg { display: flex; flex: 1; gap: 2px; padding: 2px; background: rgba(0,0,0,0.16); border-radius: 9px; }
         #linuxdo-auto-panel .speed-btn {
           flex: 1 1 0; padding: 5px 0; border: 0; border-radius: 7px; background: transparent;
@@ -2594,6 +2861,9 @@
           display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px;
           border-top: 1px solid rgba(255,255,255,0.14); margin: 2px 0 6px; padding-top: 6px;
         }
+        /* 【v2.7.6】adv-box 用 display:grid 覆盖了通用 .hidden{display:none}，
+           高级设置初始 hidden 完全失效、永远展开；这里显式补回隐藏规则 */
+        #linuxdo-auto-panel .adv-box.hidden { display: none; }
         #linuxdo-auto-panel .adv-box .row-hint { grid-column: 1 / -1; }
         /* 高级设置的 4 字标签放不进 28px 标签列（会被截断），改成「标签在上、输入框在下」的卡片式 */
         #linuxdo-auto-panel .adv-box .row { flex-direction: column; align-items: stretch; gap: 3px; margin-bottom: 7px; }
@@ -2634,8 +2904,10 @@
         .auto-viewed { opacity: 0.6; }
 
         /* 半透明信息浮窗：面板统计区的镜像，显示在页面左上角（可拖动） */
+        /* 【v2.7.6】浮窗 z-index 原为 2147483647，比分区弹窗(2147483646)高、
+           且压在页面自身的全屏模态之上；降到 2147483645 让弹窗/模态优先覆盖 */
         #linuxdo-stats-float {
-          position: fixed; top: 10px; left: 10px; z-index: 2147483647;
+          position: fixed; top: 10px; left: 10px; z-index: 2147483645;
           display: flex; flex-direction: column; gap: 4px;
           padding: 10px 14px; min-width: 170px;
           background: rgba(16, 12, 34, 0.30);
@@ -2732,11 +3004,11 @@
               <button class="speed-btn human-btn ${humanMode?'active':''}" data-human="true" title="开启后速度/定时/目标/高级设置由人化算法接管，模拟真人（下方被接管项不再显示）">开启</button>
               <button class="speed-btn human-btn ${!humanMode?'active':''}" data-human="false" title="使用下方手动设置">关闭</button>
             </div></div>
-            <div class="row-hint">开启后速度档位/具体定时/目标数值/高级设置由人化算法接管（隐藏），下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
+            <div class="row-hint">开启后：速度档位/具体定时/目标数值/高级设置全部由人化算法接管并隐藏，改由下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
             <div class="row row-debug"><span class="row-label">调试开人化</span>
-              <button class="speed-btn debug-btn ${debugMode?'active':''}" id="btn-debug-toggle" title="小开关：一键开启人化模式并跳过每日定时等待，立即开始一轮浏览（调试/尝鲜用，刷新后自动关闭）">${debugMode ? '已开启' : '开启'}</button>
+              <button class="speed-btn debug-btn ${debugMode?'active':''}" id="btn-debug-toggle" title="小开关：一键开启人化模式并跳过每日定时等待，立即开始一轮浏览（调试/尝鲜用，随本轮自动关闭，运行中刷新页面后自动恢复）">${debugMode ? '已开启' : '开启'}</button>
             </div>
-            <div class="row-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（刷新页面后自动关闭，人化开关仍由上方控制）</div>
+            <div class="row-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（随本轮结束自动关闭；若运行中刷新页面，会自动恢复调试态继续浏览，人化开关仍由上方控制）</div>
             <div class="row row-human-opt ${humanMode?'':' hidden'}" id="human-options">
               <div class="row-human-opt-title">人化专属设置（开启后生效）</div>
               <div class="row row-human-opt-line"><span class="row-label">时段</span><div class="seg">
@@ -2759,16 +3031,16 @@
                 <span class="goal-unit">赞</span>
               </div>
               <div class="row row-human-opt-line"><span class="row-label">翻楼目标</span>
-                <input type="number" class="floor-input target-input" id="human-floor-min" min="0" step="1" value="${Storage.get('human_floor_min', 0)}" title="每帖浏览前 N 楼即换帖；每天在最小~最大之间随机抽一个，0=不限（整帖读完）">
+                <input type="number" class="floor-input target-input" id="human-floor-min" min="0" step="1" value="${Storage.get('human_floor_min', 30)}" title="每帖按百分比深度翻楼后换帖；在最小~最大比例之间每帖随机抽一个，如 30 表示读到该帖 30% 楼即换帖，0=不限（整帖读完）">
                 <span class="goal-unit">~</span>
-                <input type="number" class="floor-input target-input" id="human-floor-max" min="0" step="1" value="${Storage.get('human_floor_max', 0)}" title="每帖浏览前 N 楼即换帖；每天在最小~最大之间随机抽一个，0=不限（整帖读完）">
-                <span class="goal-unit">楼</span>
+                <input type="number" class="floor-input target-input" id="human-floor-max" min="0" step="1" value="${Storage.get('human_floor_max', 100)}" title="每帖按百分比深度翻楼后换帖；在最小~最大比例之间每帖随机抽一个，如 100 表示读到全帖才换，0=不限（整帖读完）">
+                <span class="goal-unit">%</span>
               </div>
               <div class="row row-human-opt-line"><span class="row-label">时长上限</span>
                 <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
                 <span class="goal-unit">分钟（0=不限）</span>
               </div>
-              <div class="row-hint">人化模式下每天在设定范围内随机抽取今日目标、在所选时段内随机定时（叠加 ±15分~±8小时偏移）；三项目标全 0 时无法开始</div>
+              <div class="row-hint">人化模式：每天在设定范围内随机抽取今日目标、在所选时段内随机定时（含 ±15分~±8小时偏移）；浏览/点赞/翻楼目标全为 0 时无法开始</div>
             </div>
             <div class="row" id="human-hide-speed"><span class="row-label">速度</span><div class="seg">
               <button class="speed-btn ${currentSpeed==='slow'?'active':''}" data-speed="slow">慢</button>
@@ -2802,13 +3074,13 @@
                 <input type="checkbox" id="floor-unread-only">只计未读
               </label>
             </div>
-            <div class="row-hint">填 N 则每帖读到第 N 楼就换下一帖，留空或 0 表示整帖读完；勾选只计未读则不重复数已读楼层</div>
+            <div class="row-hint" id="human-hide-floor-hint">填 N 则每帖读到第 N 楼就换下一帖，留空或 0 表示整帖读完；勾选只计未读则不重复数已读楼层</div>
             <div class="row" id="human-hide-schedule"><span class="row-label">定时</span><div class="seg">
               <button class="speed-btn sched-btn ${scheduleEnabled?'active':''}" data-sched="true">开启</button>
               <button class="speed-btn sched-btn ${!scheduleEnabled?'active':''}" data-sched="false">关闭</button>
             </div>
               <input type="time" class="floor-input sched-time" id="sched-time-input" step="60"
-                title="每天到这个时间自动开始新一轮浏览；修改时间即自动开启定时">
+                title="每天到这个时间自动开始新一轮浏览；修改时间不会自动开启定时，需在上方开启（v2.7.4 起）">
             </div>
             <div class="row row-goal" id="human-hide-goal"><span class="row-label">目标</span>
               <input type="number" class="floor-input target-input" id="target-topics-input" min="0" step="1"
@@ -2821,7 +3093,7 @@
                 placeholder="0" title="本轮最多运行 N 分钟自动停止，0 表示不限">
               <span class="goal-unit">时长上限(分)</span>
             </div>
-            <div class="row-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览与点赞都达标才自动停止（0 为不限），超时也会自动停</div>
+            <div class="row-hint" id="human-hide-goal-hint">目标按「刷帖数」计（浏览的话题个数），翻楼/阅读楼层不计入；浏览与点赞都达标才自动停止（0 为不限），超时也会自动停</div>
             <div class="row"><span class="row-label">浮窗</span>
               <label class="floor-check" title="面板内不再显示统计信息；勾选后改为页面左上角半透明浮窗实时显示（可拖动到任意位置），取消勾选则任何位置都不显示统计信息">
                 <input type="checkbox" id="floating-stats">半透明信息浮窗
@@ -3509,13 +3781,12 @@
 
       // 多开检查对所有启动路径生效（手动 / 定时 / 自动恢复）：另一标签页还在活跃租约内
       // （90 秒心跳超时为失效）且拥有锁时，提醒或放弃，避免两个页面同时抓同一批帖子
-      const lastActiveTime = Storage.get('linuxdo_active_tab_time', 0);
-      const activeTabId = Storage.get('linuxdo_active_tab_id', null);
-      const otherRunning = Date.now() - lastActiveTime < 90000 &&
-        activeTabId !== TAB_ID && Storage.get('auto_running', false);
+      // 【v2.7.6 组6】读单键租约（readActiveLease）替代双键读取
+      const lease = readActiveLease();
+      const otherRunning = lease && lease.tabId !== TAB_ID && Storage.get('auto_running', false);
       if (otherRunning) {
         if (isManual) {
-          if (!confirm('⚠️ 警告：检测到后台已有其他页面正在自动浏览。\n\n如果在多页同时运行可能会导致浏览器卡死。强制接管此页码？')) {
+          if (!confirm('⚠️ 警告：检测到后台已有其他页面正在自动浏览。\n\n如果在多页同时运行可能会导致浏览器卡死。强制接管此页面？')) {
             return;
           }
         } else {
@@ -3525,9 +3796,27 @@
       }
 
       this.isEnabled = true;
+      // 【v2.7.6 组6】CAS 写后读回：先写入本页租约（heartbeat 落盘 {tabId, token, expireAt}），
+      // 再读回确认 tabId 仍是自己。若此刻另一标签页恰好也在 start 并抢写租约，读回的
+      // tabId 不是本页 → 判定为多开竞态，让出并停止（防「两页同时认为自己是主人」）
+      this.leaseToken = 't' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 10);
+      this.heartbeat();
+      {
+        const leaseBack = readActiveLease();
+        if (leaseBack && leaseBack.tabId !== TAB_ID) {
+          log('🚫 检测到另一标签页抢先持有运行租约，本页让出');
+          this.stop();
+          return;
+        }
+      }
       // 【v2.7.4】调试模式驱动的运行不写 auto_running：调试是「验一眼人化行为」的临时动作，
       // 落盘的话刷新页面会触发 autoResume 复跑一轮完整浏览（cf74d325 L5）
       Storage.set('auto_running', !debugMode);
+      // 【v2.7.6 调试×刷新】调试态开跑时刷新 TTL：一轮浏览可能跨 30 分钟，若中途刷新
+      // 页面，TTL 必须覆盖到下一轮开始前（setup() 以 debug_active_until 判断是否恢复）
+      if (debugMode) {
+        Storage.set('debug_active_until', String(Date.now() + 30 * 60 * 1000));
+      }
       this.heartbeat();
       this.startTime = Date.now();
 
@@ -3560,7 +3849,15 @@
     stop() {
       this.isEnabled = false;
       Storage.set('auto_running', false);
-      Storage.set('linuxdo_active_tab_time', 0); // 释放占用锁
+      // 【v2.7.6 组6】释放单键租约（替代旧双键置 0）：他页 readActiveLease() 读不到即视为无主
+      Storage.remove('linuxdo_lease');
+      this.leaseToken = '';
+      // 【v2.7.6 调试×刷新】正常结束/手动停止时清掉调试 TTL：调试是临时动作，
+      // 本轮结束即应复原（刷新后不再自动恢复调试态）；TTL 只服务于「运行中刷新」场景
+      Storage.remove('debug_active_until');
+      // 【v2.7.6 组6】清掉返回路径：本轮结束不留残值，避免下一轮会话 topic 读完
+      // 后 returnToList 跳到上一轮留下的旧列表（列表可能已不在浏览目标里）
+      Storage.remove('session_return_path');
       sessionPinnedDay = ''; // 【v2.7.4】解除会话起始日钉住，跨天重摇恢复生效
 
       if (this.heartbeatTimer) {
@@ -3610,15 +3907,17 @@
       const todayKey = this.todayKey();
       if (Storage.get('sched_last_run_date', '') === todayKey) return;
 
-      // 【v2.7.4 修复 d700e51f M3】跨午夜连环触发防护：上一轮刚结束（60 分钟内）不立即
-      // 再触发——23:50 那轮跑到次日凌晨 00:05 结束后，次日 profile 若抽到凌晨档 base，
-      // 会落进 catchup 窗口被立刻拉起新一轮并提前消费当天配额（白噪声指纹 + 配额错位）
-      const lastFinish = parseInt(Storage.get('sched_last_finish_at', 0), 10) || 0;
-      if (lastFinish > 0 && Date.now() - lastFinish < 60 * 60000) return;
-
       const now = new Date();
       const nowMin = now.getHours() * 60 + now.getMinutes();
       const nowSec = nowMin * 60 + now.getSeconds();
+
+      // 【v2.7.6 跨日定时】昨天深夜档目标越界到次日凌晨时（targetMin >= 1440），昨天写下的
+      // sched_pending_min / sched_pending_day 表示「今天凌晨」还有一次待触发（如昨 23:50 +
+      // 偏移 15 分 → 今 00:05）。今天优先按它触发，而不是用今天新抽的基准时段（可能晚在 22:00）
+      const pendingDay = Storage.get('sched_pending_day', '');
+      const pendingMin = parseInt(Storage.get('sched_pending_min', '-1'), 10);
+      const hasPending = pendingDay === todayKey && pendingMin >= 0 && pendingMin < 1440;
+
       let targetMin;   // 原始目标分钟（可越界：<0 属昨天晚些时候，>=1440 属明天凌晨）
       let catchupMin;  // 目标时刻之后的「补跑」窗口（分钟）：真人会因作息漂移晚几分钟，不会晚几小时
       let schedDesc = scheduleTime;
@@ -3649,9 +3948,44 @@
         schedDesc = `${scheduleTime} + ${jitterMin} 分抖动`;
       }
 
-      // 越界目标归一化到「今天」的那一次出现时刻：深夜/跨午夜档的 base 落 0~299 分即次日凌晨，
-      // 这里换算成本日对应钟点（01:40 / 03:00…），而不是把 23:59 当成今天的出现
-      const todayTarget = ((targetMin % 1440) + 1440) % 1440;
+      // 【v2.7.6 跨日】目标越界 >= 1440 分 = 次日凌晨：今天不触发，写下明天的 pending 续查，
+      // 明早 checkSchedule 按 pending 触发。旧实现用 modulo 把它归一回「今天凌晨」，会与
+      // 今天新抽的目标竞争，且页面跨零点后 ensureDailyProfile 已重摇今天配置，昨天写下的
+      // 目标时刻就丢了（23:5X 设定 + 5 分抖动 = 00:04 的普通模式同样受益）
+      if (targetMin >= 1440) {
+        const tomorrow = new Date(now.getTime() + 24 * 60 * 60000);
+        const tk = `${tomorrow.getFullYear()}-${String(tomorrow.getMonth() + 1).padStart(2, '0')}-${String(tomorrow.getDate()).padStart(2, '0')}`;
+        Storage.set('sched_pending_min', String(targetMin - 1440));
+        Storage.set('sched_pending_day', tk);
+        const phh = String(Math.floor((targetMin - 1440) / 60)).padStart(2, '0');
+        const pmm = String((targetMin - 1440) % 60).padStart(2, '0');
+        log(`⏰ 目标时刻 ${schedDesc} 落在次日凌晨 ${phh}:${pmm}，今天不触发，明早自动开始`);
+        return;
+      }
+
+      // 【v2.7.6 双候选】今天候选 = 昨天跨日写下的 pending（凌晨档）与今天新抽目标取
+      // 「晚于当前、更近者」：真人一天只会在一个时刻上线，两个候选都有效时取更近的那个，
+      // 避免凌晨档 pending（如 00:30）和今天新抽的早场目标（如 00:15）互抢导致当天跑两次
+      const freshTarget = ((targetMin % 1440) + 1440) % 1440;
+      let todayTarget;
+      if (hasPending) {
+        const cands = [pendingMin, freshTarget].filter(c => c >= nowMin);
+        todayTarget = cands.length > 0 ? Math.min(...cands) : null;
+      } else {
+        todayTarget = freshTarget;
+      }
+      if (todayTarget === null) return;  // 两个候选都已过去，今天不补跑
+
+      // 【v2.7.6 跨午夜连环触发防护（收窄）】上一轮刚结束（60 分钟内）不立即再触发——
+      // 23:50 那轮跑到次日凌晨 00:05 结束后，次日 profile 若抽到凌晨档 base，会落进
+      // catchup 窗口被立刻拉起新一轮并提前消费当天配额（白噪声指纹 + 配额错位）。
+      // 收窄点：只在「今天目标落在凌晨档（00:00~06:00）」时生效，白天/晚间档目标不受
+      // 影响（旧实现放在目标计算前，08:00 结束的上一轮会把当天 09:00 的目标也一起吞掉）；
+      // pending 本身就是昨天的目标时刻而非连环触发，豁免
+      if (todayTarget <= 360 && !hasPending) {
+        const lastFinish = parseInt(Storage.get('sched_last_finish_at', 0), 10) || 0;
+        if (lastFinish > 0 && Date.now() - lastFinish < 60 * 60000) return;
+      }
 
       // 还没到点：今天晚些时候再看
       if (nowMin < todayTarget) return;
@@ -3670,9 +4004,11 @@
       if (nowSec < todayTarget * 60 + fireOffset) return;
 
       // 其他标签页可能在运行：交给那个页面自然收尾；心跳超过 90 秒视为已失效可接管
-      // （后台标签页定时器会被浏览器节流到 1 分钟级，15 秒租约太短会互相抢锁）
+      // 【v2.7.6 组6】读单键租约判他页持锁（替代旧双键；后台标签页定时器会被浏览器节流
+      // 到 1 分钟级，15 秒租约太短会互相抢锁）
+      const leaseNow = readActiveLease();
       if (Storage.get('auto_running', false) &&
-          Date.now() - Storage.get('linuxdo_active_tab_time', 0) < 90000) return;
+          leaseNow && leaseNow.tabId !== TAB_ID) return;
 
       // 目标全为 0（浏览/点赞/时长全不限）时不再消费当日配额：
       // 否则 start() 内部会跳过开始，但这里已提前写掉 sched_last_run_date，全天被静默吞掉
@@ -3682,6 +4018,11 @@
       if (!effGoals) return;
 
       Storage.set('sched_last_run_date', todayKey);
+      // 【v2.7.6 跨日】pending 已按今天候选触发并消费，清掉避免明天误用昨天写的残留
+      if (hasPending) {
+        Storage.set('sched_pending_min', '-1');
+        Storage.set('sched_pending_day', '');
+      }
       log(`⏰ 每日定时触发（${schedDesc}），自动开始新一轮浏览`);
       this.start(false, true);
     }
@@ -3718,9 +4059,12 @@
         const dm = humanDurationMin();
         const remain = tt > 0 ? tt : '不限';
         const likes = lt > 0 ? lt : '不限';
-        const floors = ft > 0 ? `前${ft}楼` : '不限';
+        // 【v2.7.6】翻楼从绝对楼层改百分比深度：显示面板配置的范围（默认 30~100%）
+        const fLo = parseInt(Storage.get('human_floor_min', 30), 10);
+        const fHi = parseInt(Storage.get('human_floor_max', 100), 10);
+        const floors = fHi > 0 ? `${fLo}~${fHi}%` : '不限';
         const minutes = dm > 0 ? `${dm} 分` : '不限';
-        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / 翻楼 ${floors} / ${minutes}`;
+        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / 翻楼深度 ${floors} / ${minutes}`;
       } else {
         const remain = topicTarget > 0 ? topicTarget : '不限';
         const likes = likeTarget > 0 ? likeTarget : '不限';
