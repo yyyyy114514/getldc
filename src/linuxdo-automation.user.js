@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.6
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、人化翻楼改百分比深度与行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS
+// @version      2.7.7
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -439,8 +439,6 @@
   let perTopicScrollScale = 1;      // 滚动步长缩放
   let perTopicTimeScale = 1;        // 翻页间隔/加载等待 缩放
   let perTopicFloorLimit = 0;       // 当前帖的翻楼上限（0=不限，整帖读完）
-  let perTopicFloorDepth = 0;       // 【v2.7.6】当前帖翻楼深度（占总楼数比例；0=不限）。
-                                    //   TopicBrowser.start 拿到总楼数后换算成 perTopicFloorLimit
   let perTopicGiveUpRatio = 0;      // 中途离场点（0=读完；>0 表示读到该帖该比例楼层即返回）
   // 【v2.7.6 点赞根因修复】每帖只预摇一次「赞不赞、赞哪楼」：
   //   0 = 本帖不赞（约 55%）；1 = 赞主楼（约 25%）；2 = 赞中后段某一楼（约 20%）。
@@ -469,23 +467,15 @@
     // 基准、偶发明显拖长」，均匀分布抽不出这种形态，形状本身就是统计指纹
     perTopicScrollScale = 0.85 + Math.random() * 0.3;
     perTopicTimeScale = logNormalTrunc(1, 0.3, 0.7, 1.5);
-    // 【v2.7.6 人化翻楼·每帖重抽（百分比深度）】翻楼上限改为按「占总楼数的比例」抽取：
-    //   1) depth = 截断对数正态（中位 55%、σ0.5，夹 0.2~1.0）
-    //   2) 再夹进面板 min~max 百分比（默认 30~100；上限 0=不限整帖读完）
-    //   3) 实际翻楼楼数 = depth × 话题总楼数（TopicBrowser.start 拿到总数后换算成
-    //      perTopicFloorLimit，isOverFloorLimit 仍按绝对楼层比较）
-    // 旧实现按绝对楼层抽：两三楼的短帖一下就读完（每帖都全读），几百楼的深水帖又永远
-    // 读不到底（固定绝对楼数）。比例化后短帖长帖的阅读深度一致，才符合「热帖多读几楼、
-    // 水帖划两下就走」的真人耐心模式
-    const floorMinPct = Math.max(0, Math.floor(Number(Storage.get('human_floor_min', 30)) || 0));
-    const floorMaxPct = Math.max(0, Math.floor(Number(Storage.get('human_floor_max', 100)) || 0));
-    if (floorMaxPct <= 0) {
-      perTopicFloorDepth = 0;   // 上限 0 = 不限（整帖读完）
-    } else {
-      const lo = Math.max(0.2, floorMinPct / 100);
-      const hi = Math.min(1.0, floorMaxPct / 100);
-      perTopicFloorDepth = logNormalTrunc(0.55, 0.5, lo, hi);
-    }
+    // 【v2.7.7 人化翻楼·绝对楼层（回退 v2.7.6 百分比方案）】翻楼上限恢复为「绝对楼层数」：
+    // 每换一帖在面板 min~max 范围内随机抽一个整数楼层上限（如设 0-3 → 每帖随机翻 1~3 楼），
+    // 0=不限整帖读完。v2.7.6 改成按总楼数百分比抽取后，用户设 0-3 被当作 0~3%（下限钳到 0.2
+    // 后与上限冲突），且旧存值 0（绝对「不限」）被解释成 0% 深度 = 整帖读完 → 设置 0-3 却
+    // 全翻完。回退绝对语义后 drawRangeTarget(0,3) 即每帖随机 1~3 楼
+    perTopicFloorLimit = drawRangeTarget(
+      Storage.get('human_floor_min', 0),
+      Storage.get('human_floor_max', 0)
+    );
     // 【v2.7.6 中途离场】概率从 15% 提高到 30~40%（真人多数帖子不会帖帖读完），
     // 离场点从固定「55%~85% 中段」铺开到 25%~95%（有的帖翻几下就走、有的快读完才走，
     // 集中在中段是设定感/机器指纹）
@@ -1631,13 +1621,7 @@
       // 该帖实际总楼层数：用作滚动/等待的硬上限，帖子只有 2 楼就不会白等到「不存在的第 3 楼」
       this.topicTotalPosts = getTopicTotalPosts(topicId);
       if (this.topicTotalPosts > 0) {
-        // 【v2.7.6 人化翻楼·百分比深度】refreshTopicParams 已抽好本帖深度比例
-        // （perTopicFloorDepth，0=不限），拿到总楼数后换算成绝对楼层上限：
-        // 短帖按比例少读几楼、长帖按比例深读，阅读深度对长短帖一致
-        if (humanMode && perTopicFloorDepth > 0) {
-          perTopicFloorLimit = Math.max(1, Math.round(this.topicTotalPosts * perTopicFloorDepth));
-        }
-        // 【v2.7.3 人化翻楼】人化下用每日翻楼目标（0=不限），非人化用手设 floorLimit
+        // 【v2.7.3 人化翻楼】人化下用每帖重抽的翻楼上限（0=不限），非人化用手设 floorLimit
         const floorCap = humanMode ? humanFloorTarget() : floorLimit;
         log(`话题共 ${this.topicTotalPosts} 楼${floorCap > 0 && this.topicTotalPosts < floorCap ? `（小于楼层上限 ${floorCap}，读完即换帖）` : ''}`);
       }
@@ -1722,7 +1706,11 @@
 
       while (this.isRunning) {
         try {
-          await this.processVisiblePosts();
+          // 【v2.7.7】捕获本轮是否有新楼层入眼：到底+无新楼+等待后仍无新内容 → 收工。
+          // 修复「翻到底还是试着翻」：SPA 场景总楼数未知（topicTotalPosts=0）时
+          // 旧代码只靠 isContentFullyLoaded 兜底，页面高度被懒加载/浮动元素反复撑起
+          // 时 noNewContentCount 永远攒不满 → 无限空滚。现在本队无新楼即视为读完。
+          const newPostFound = await this.processVisiblePosts();
           // 【v2.7.6 点赞根因修复】补判暂缓点赞：首见满 4 秒的楼层补一次决策机会
           // （旧实现进帖 4 秒一次性判定后不再补，短帖/首屏被吞 → 0 赞根因之一）
           if (this.likePending.size > 0) {
@@ -1770,7 +1758,9 @@
               if (this.scrollController.checkHeightChanged()) break;
             }
             if (!this.scrollController.hasNewContent()) {
-              if (this.scrollController.isContentFullyLoaded()) {
+              // 【v2.7.7】到底 + 本轮无新楼层入眼 + 等待后高度无增长 → 已读完，
+              // 不再空等 noNewContentRetry 攒满（总楼数未知时旧逻辑可能永远滚不到收工）
+              if (this.scrollController.isContentFullyLoaded() || !newPostFound) {
                 log('所有回复已浏览完成');
                 break;
               }
@@ -3031,10 +3021,10 @@
                 <span class="goal-unit">赞</span>
               </div>
               <div class="row row-human-opt-line"><span class="row-label">翻楼目标</span>
-                <input type="number" class="floor-input target-input" id="human-floor-min" min="0" step="1" value="${Storage.get('human_floor_min', 30)}" title="每帖按百分比深度翻楼后换帖；在最小~最大比例之间每帖随机抽一个，如 30 表示读到该帖 30% 楼即换帖，0=不限（整帖读完）">
+                <input type="number" class="floor-input target-input" id="human-floor-min" min="0" step="1" value="${Storage.get('human_floor_min', 0)}" title="每帖浏览前 N 楼即换帖；在最小~最大之间每帖随机抽一个，如 3 表示每帖读到第 3 楼就换帖，0=不限（整帖读完）">
                 <span class="goal-unit">~</span>
-                <input type="number" class="floor-input target-input" id="human-floor-max" min="0" step="1" value="${Storage.get('human_floor_max', 100)}" title="每帖按百分比深度翻楼后换帖；在最小~最大比例之间每帖随机抽一个，如 100 表示读到全帖才换，0=不限（整帖读完）">
-                <span class="goal-unit">%</span>
+                <input type="number" class="floor-input target-input" id="human-floor-max" min="0" step="1" value="${Storage.get('human_floor_max', 0)}" title="每帖浏览前 N 楼即换帖；在最小~最大之间每帖随机抽一个，如 3 表示每帖读到第 3 楼就换帖，0=不限（整帖读完）">
+                <span class="goal-unit">楼</span>
               </div>
               <div class="row row-human-opt-line"><span class="row-label">时长上限</span>
                 <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
@@ -4059,12 +4049,12 @@
         const dm = humanDurationMin();
         const remain = tt > 0 ? tt : '不限';
         const likes = lt > 0 ? lt : '不限';
-        // 【v2.7.6】翻楼从绝对楼层改百分比深度：显示面板配置的范围（默认 30~100%）
-        const fLo = parseInt(Storage.get('human_floor_min', 30), 10);
-        const fHi = parseInt(Storage.get('human_floor_max', 100), 10);
-        const floors = fHi > 0 ? `${fLo}~${fHi}%` : '不限';
+        // 【v2.7.7】翻楼恢复绝对楼层：显示面板配置的范围（默认 0~0 = 不限整帖读完）
+        const fLo = parseInt(Storage.get('human_floor_min', 0), 10);
+        const fHi = parseInt(Storage.get('human_floor_max', 0), 10);
+        const floors = fHi > 0 ? `${fLo}~${fHi} 楼` : '不限';
         const minutes = dm > 0 ? `${dm} 分` : '不限';
-        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / 翻楼深度 ${floors} / ${minutes}`;
+        display = `人化接管 · 今日目标 ${remain} 帖 / ${likes} 赞 / 翻楼 ${floors} / ${minutes}`;
       } else {
         const remain = topicTarget > 0 ? topicTarget : '不限';
         const likes = likeTarget > 0 ? likeTarget : '不限';
