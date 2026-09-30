@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.7
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻
+// @version      2.7.8
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -768,10 +768,23 @@
     // 每日时段随机控制，手动「开始」按钮会误导用户；但「停止运行」按钮必须始终可见——
     // 人化轮次运行中用户随时可能想停，整体隐藏 panel-actions 会让运行中的脚本无法手动停止
     // （旧实现整容器隐藏，折叠面板只留了一个还原锚点，观感差且操作路径深）
+    // 【v2.7.8 修复②：人化按钮显隐统一入口】所有按钮翻转都走 setRunButtons(running)，
+    // 避免 start()/stop()/setup() 各自硬写 display 与这里互相覆盖（旧 stop() 无条件把
+    // startBtn 恢复成 block，人化模式下会冒出「开始」按钮）。规则：
+    //   运行中   → 开始隐藏 / 停止显示
+    //   停止态   → 人化：开始隐藏 + 停止隐藏（用户要求：打开人化就不显示开始按钮，
+    //              开始了显示停止按钮就行）；非人化：开始显示 / 停止隐藏
+    setRunButtons(typeof automation !== 'undefined' && automation && automation.isEnabled);
+  }
+
+  // 【v2.7.8 修复②】人化模式感知的运行/停止按钮统一显隐（start/stop/setup/syncPanel 共用）
+  function setRunButtons(running) {
+    if (typeof document === 'undefined' || !document.getElementById) return;
     const startBtn = document.getElementById('btn-auto-start');
-    if (startBtn) startBtn.style.display = humanMode ? 'none' : '';
     const stopBtn = document.getElementById('btn-auto-stop');
-    if (stopBtn) stopBtn.style.display = ''; // 恒可见（行内 display 由运行生命周期管理）
+    if (!startBtn || !stopBtn) return;
+    startBtn.style.display = (running || humanMode) ? 'none' : 'block';
+    stopBtn.style.display = running ? 'block' : 'none';
   }
 
   function setList(listType) {
@@ -1596,6 +1609,11 @@
       // 【v2.7.4 L3 d6a2816c】是否已标过「本帖已浏览」：由首个滚入视口的未读楼层触发，
       // 进帖即标会让「只点开就退出」的帖子也虚增浏览计数
       this.topicViewedMarked = false;
+      // 【v2.7.8 修复⑥】本帖是否已「真正读完」（走完整个楼层序列到无新内容/读完全部楼出口）：
+      // 未知总楼数的 SPA 短帖全屏一次读完后 scrollsDone 仍为 0，且 topicTotalPosts=0 时
+      // fullySeen 恒为 false，旧 scrollsDone 门槛会把这类短帖的点赞也挡掉 → 仍 0 赞。
+      // 读到完再补判即为「全文已读」，不应再要求滚动次数。另供 chosen===2 档短帖回退主楼用。
+      this.topicFullyBrowsed = false;
     }
 
     async start() {
@@ -1641,6 +1659,19 @@
       }
       this.scrollController.reset();
       await this.browseAllReplies();
+
+      // 【v2.7.8 修复④：数据不更新的短帖路径】processVisiblePosts 只在读到「未读楼层」
+      // （floor > floorBaseline）时才标记话题已浏览。若用户之前已读完本帖（floorBaseline
+      // 高），整帖所有楼层都 ≤ baseline → 一帖读下来一个未读楼层都没有 → topicViewedMarked
+      // 恒 false → 话题永不标记已浏览：本会话浏览计数不动（数据不更新），列表浏览器还会
+      // 把它当成「没浏览过」反复重选，同一批旧帖永远占着候选位。这里兜底：只要本轮真的
+      // 滚过楼（maxFloorSeen>0）就把话题标记为已浏览并计入会话浏览数。
+      if (!this.topicViewedMarked && this.maxFloorSeen > 0) {
+        this.topicViewedMarked = true;
+        this.history.markTopicViewed(topicId);
+        this.onStatsUpdate?.();
+        log(`话题 ${topicId} 已读完（无新楼层，兜底标记已浏览）`);
+      }
 
       if (this.isRunning) {
         // dosss 式：每帖浏览完即时查目标，达标直接收工，不再返回列表
@@ -1711,29 +1742,29 @@
           // 旧代码只靠 isContentFullyLoaded 兜底，页面高度被懒加载/浮动元素反复撑起
           // 时 noNewContentCount 永远攒不满 → 无限空滚。现在本队无新楼即视为读完。
           const newPostFound = await this.processVisiblePosts();
-          // 【v2.7.6 点赞根因修复】补判暂缓点赞：首见满 4 秒的楼层补一次决策机会
-          // （旧实现进帖 4 秒一次性判定后不再补，短帖/首屏被吞 → 0 赞根因之一）
-          if (this.likePending.size > 0) {
-            for (const pid of [...this.likePending]) {
-              if (!this.isRunning) break;
-              const seenAt = this.postSeenAt.get(pid) || this.enteredAt;
-              if (Date.now() - seenAt >= 4000) {
-                this.likePending.delete(pid);
-                const el = document.getElementById(`post_${pid}`);
-                if (el && this.shouldLike(el, pid)) {
-                  await this.tryLikePost(el, pid);
-                }
-              }
-            }
-          }
+          // 【v2.7.8 短帖 0 赞根因修复】统一补判暂缓点赞：首见满 4 秒的楼层补一次决策
+          // 机会。旧实现（v2.7.6）只在循环顶部补判一次——短帖/首屏第一轮就读完全部
+          // 楼层，likePending 里不满 4 秒的项随后直接被各种 break 出口带走，永远等不到
+          // 第二次判定 → 短帖 0 赞。现在抽成 flushLikePending() 并在每个 break 出口前
+          // 各补一次（waitForGate 先等满 4 秒再判），离场前把点赞决策全部做完
+          await this.flushLikePending();
           this.onStatsUpdate?.();
 
-          if (this.floorLimitReached) break;
+          if (this.floorLimitReached) {
+            // 【v2.7.8】楼层上限出口：暂缓点赞不满 4 秒就先等门限走完再判，避免带病退出
+            await this.flushLikePending(true);
+            break;
+          }
 
           // 帖子实际楼层数硬上限：已知总楼数且已读到最高楼 → 立即收工，
           // 不再滚动等「永远等不到的新楼」（如设置 3 楼但帖子只有 2 楼）
           if (this.topicTotalPosts > 0 && this.maxFloorSeen >= this.topicTotalPosts) {
             log(`已读完全部 ${this.topicTotalPosts} 楼，提前结束本帖`);
+            // 【v2.7.8 修复⑥】已知总楼数的「读完全部楼」出口：标记本帖真正读完，
+            // 供 shouldLike 放行未知总楼数场景的短帖（见 topicFullyBrowsed 注释）
+            this.topicFullyBrowsed = true;
+            // 【v2.7.8】短帖读完即走的经典 0 赞路径：先补判暂缓点赞再收工
+            await this.flushLikePending(true);
             break;
           }
 
@@ -1745,6 +1776,8 @@
             // 【v2.7.4 修复 d6a2816c L2】日志按实际阅读比例输出（maxFloorSeen/total），
             // 而非设定阈值比例——设定 60% 但实际滚到 73% 就离开时如实记录 73% 处
             log(`本帖读到 ${this.maxFloorSeen}/${this.topicTotalPosts} 楼后中途离开（${Math.round(this.maxFloorSeen / this.topicTotalPosts * 100)}% 处）`);
+            // 【v2.7.8】离场出口：补判暂缓点赞后再返回列表
+            await this.flushLikePending(true);
             break;
           }
 
@@ -1762,6 +1795,12 @@
               // 不再空等 noNewContentRetry 攒满（总楼数未知时旧逻辑可能永远滚不到收工）
               if (this.scrollController.isContentFullyLoaded() || !newPostFound) {
                 log('所有回复已浏览完成');
+                // 【v2.7.8 修复⑥】到底+等待后无新内容 = 本帖真正读完（SPA 未知总楼数
+                // 场景也成立）。标记供 shouldLike 放行 scrollsDone<1 的短帖点赞门槛
+                this.topicFullyBrowsed = true;
+                // 【v2.7.8】到底收工出口：暂缓点赞可能在首屏满 4 秒前就被此出口带走，
+                // 先补判再返回列表，杜绝「翻到底也不赞」的短帖路径
+                await this.flushLikePending(true);
                 break;
               }
             }
@@ -1787,6 +1826,38 @@
         } catch (error) {
           log('浏览回复出错:', error.message);
           await randomDelay(2000, 3000);
+        }
+      }
+    }
+
+    // 【v2.7.8 短帖 0 赞根因修复】暂缓点赞统一补判：对 likePending 里已满 4 秒首见门限
+    // 的楼层补一次点赞决策。waitForGate=true 用于「即将离开本帖」的出口（各 break 前）：
+    // 先等「最晚」暂缓楼层的 4 秒门限走完（最长等 4 秒，短帖在读完全部楼层后短暂停留
+    // 再判，本身就是真人节奏），再统一补判，避免短帖/首屏在不满 4 秒时就被 break
+    // 带出循环、likePending 永远清不掉 → 整帖 0 赞。按最晚而非最早等待：短帖各楼层
+    // 首见时刻可能差几百毫秒，只等最早的会让后见的楼层仍不满 4 秒就被 break 丢弃。
+    async flushLikePending(waitForGate = false) {
+      if (this.likePending.size === 0) return;
+      if (waitForGate) {
+        let latestSeen = 0;
+        for (const pid of this.likePending) {
+          const seenAt = this.postSeenAt.get(pid) || this.enteredAt;
+          if (seenAt > latestSeen) latestSeen = seenAt;
+        }
+        const remain = 4000 - (Date.now() - latestSeen);
+        if (remain > 0 && this.isRunning) {
+          await randomDelay(remain, remain + 300);
+        }
+      }
+      for (const pid of [...this.likePending]) {
+        if (!this.isRunning) break;
+        const seenAt = this.postSeenAt.get(pid) || this.enteredAt;
+        if (Date.now() - seenAt >= 4000) {
+          this.likePending.delete(pid);
+          const el = document.getElementById(`post_${pid}`);
+          if (el && this.shouldLike(el, pid)) {
+            await this.tryLikePost(el, pid);
+          }
         }
       }
     }
@@ -1890,7 +1961,10 @@
       // 挂进 likePending，够时后由 browseAllReplies 补判，不再一次性放弃
       if (Date.now() - (this.postSeenAt.get(postId || '') || this.enteredAt) < 4000) return false;
       const fullySeen = this.topicTotalPosts > 0 && this.maxFloorSeen >= this.topicTotalPosts;
-      if (this.scrollsDone < 1 && !fullySeen) return false;
+      // 【v2.7.8 修复⑥ GAP1】未知总楼数（SPA，topicTotalPosts=0）的短帖全屏一次读完时
+      // fullySeen 恒为 false 且 scrollsDone 依旧 0，旧门槛把这类短帖的点赞也挡掉 → 0 赞。
+      // topicFullyBrowsed（两个「读完」出口置位）表示本帖已整篇读完，无需再要求滚动次数
+      if (this.scrollsDone < 1 && !fullySeen && !this.topicFullyBrowsed) return false;
       // 【v2.7.3 修复】429 限流冷却期内跳过点赞（handleLikeLimit 写入 like_disabled_until，
       // 递减退避 5→15→30 分钟自动恢复；冷却期内即使开关开着也不点赞，避免继续触发风控）
       if (Date.now() < (parseInt(Storage.get('like_disabled_until', 0), 10) || 0)) return false;
@@ -1925,7 +1999,16 @@
         if (topicLikeChosen === 1) return !!(postElement && postElement.id === 'post_1');
         // 2 = 赞中后段某楼：读到目标楼（topicLikeTargetFloor）且该楼未赞过才放行
         const floor = Number(postId);
-        return floor > 0 && floor >= topicLikeTargetFloor;
+        if (floor > 0 && floor >= topicLikeTargetFloor) return true;
+        // 【v2.7.8 修复⑥ GAP2】中后段目标回退：目标楼号（3~60 预抽）对短帖永远够不到
+        // （如 5 楼帖抽到 40 楼目标），整帖读完时该 20% 决策档会静默沉没成 0 赞。
+        // 真人「进帖前已定要赞」的帖子即便短也会落在某个读过的楼上——读完仍够不到
+        // 目标楼时放行首个可判楼层（通常即主楼 post_1，它也是首见最早的 pending 项），
+        // 保住短帖在这档的点赞率，且不破坏「每帖单决策」语义。
+        if (this.topicFullyBrowsed && this.maxFloorSeen < topicLikeTargetFloor) {
+          return true;
+        }
+        return false;
       }
       return Math.random() < CONFIG.likeChance;
     }
@@ -2656,8 +2739,8 @@
 
         log('检测到自动运行状态，恢复运行...');
         // 立即把按钮翻到「停止」态，避免整页跳转后按钮长时间停在「开始」
-        document.getElementById('btn-auto-start').style.display = 'none';
-        document.getElementById('btn-auto-stop').style.display = 'block';
+        // 【v2.7.8】统一走 setRunButtons（人化模式下开始钮保持隐藏）
+        setRunButtons(true);
         document.getElementById('auto-status').textContent = '恢复中...';
         document.getElementById('status-dot').className = 'status-indicator running';
         setTimeout(() => {
@@ -2822,6 +2905,16 @@
           width: 13px; height: 13px; margin: 0; flex: none;
           accent-color: #fff; cursor: pointer;
         }
+        /* 【v2.7.8 修复③】浮窗透明度滑块：与勾选框同排，窄面板下自动压缩 */
+        #linuxdo-auto-panel .opacity-wrap {
+          display: flex; align-items: center; gap: 4px; flex: none;
+          margin-left: 6px; font-size: 11px; color: rgba(255,255,255,0.76);
+        }
+        #linuxdo-auto-panel .opacity-wrap input[type="range"] {
+          width: 64px; height: 4px; margin: 0; cursor: pointer;
+          accent-color: #fff; background: rgba(255,255,255,0.28); border-radius: 2px;
+        }
+        #linuxdo-auto-panel .opacity-wrap .opacity-val { min-width: 30px; text-align: right; }
         /* 控件下方的说明文字，左边距对齐控件（标签 28px + 间距 10px） */
         #linuxdo-auto-panel .row-hint {
           margin: -4px 0 8px 38px; font-size: 10px; line-height: 1.5;
@@ -2900,7 +2993,9 @@
           position: fixed; top: 10px; left: 10px; z-index: 2147483645;
           display: flex; flex-direction: column; gap: 4px;
           padding: 10px 14px; min-width: 170px;
-          background: rgba(16, 12, 34, 0.30);
+          /* 【v2.7.8】透明度可调：滑块写 --ld-float-opacity（默认 0.30），
+             旧浏览器无 CSS 变量支持时回退 0.30 */
+          background: rgba(16, 12, 34, var(--ld-float-opacity, 0.30));
           border: 1px solid rgba(255,255,255,0.14);
           border-radius: 12px;
           box-shadow: 0 4px 14px rgba(0,0,0,0.16);
@@ -3088,6 +3183,10 @@
               <label class="floor-check" title="面板内不再显示统计信息；勾选后改为页面左上角半透明浮窗实时显示（可拖动到任意位置），取消勾选则任何位置都不显示统计信息">
                 <input type="checkbox" id="floating-stats">半透明信息浮窗
               </label>
+              <span class="opacity-wrap" title="调节浮窗背景透明度（5%~90%），拖动滑块实时预览">
+                <input type="range" id="float-opacity" min="5" max="90" step="5" value="30">
+                <span class="opacity-val" id="float-opacity-val">30%</span>
+              </span>
             </div>
           </div>
           <div id="human-hide-advanced">
@@ -3325,6 +3424,31 @@
           : '已关闭浮窗，统计信息不再显示');
       });
       applyStatsDisplay();
+
+      // 【v2.7.8 修复③：浮窗透明度可调】滑块写 CSS 变量 --ld-float-opacity 实时生效，
+      // change 时记忆到 Storage；读入时钳制在 5%~90%（范围滑块 min/max 同步）
+      const floatOpacityInput = document.getElementById('float-opacity');
+      const floatOpacityVal = document.getElementById('float-opacity-val');
+      const applyFloatOpacity = (v) => {
+        const clamped = Math.min(90, Math.max(5, v));
+        floatBox.style.setProperty('--ld-float-opacity', String(clamped / 100));
+        if (floatOpacityVal) floatOpacityVal.textContent = `${clamped}%`;
+        if (floatOpacityInput && floatOpacityInput.value !== String(clamped)) {
+          floatOpacityInput.value = String(clamped);
+        }
+        return clamped;
+      };
+      applyFloatOpacity(Math.round((parseFloat(Storage.get('float_opacity', 0.30)) || 0.30) * 100));
+      if (floatOpacityInput) {
+        floatOpacityInput.addEventListener('input', (e) => {
+          applyFloatOpacity(parseInt(e.target.value, 10) || 30);
+        });
+        floatOpacityInput.addEventListener('change', (e) => {
+          const clamped = applyFloatOpacity(parseInt(e.target.value, 10) || 30);
+          Storage.set('float_opacity', clamped / 100);
+          log(`浮窗透明度已调整为 ${clamped}%`);
+        });
+      }
 
       // 浮窗可拖动：按住整个浮窗拖到任意位置，松手记住位置（限制在视口内）
       const floatPos = Storage.get('float_pos', null);
@@ -3765,6 +3889,13 @@
       if (isManual || resetSessionFlag) {
         this.history.resetSession();
         readingTracker.reset();
+        // 【v2.7.8 0 赞根因修复】新一轮会话清除上一轮遗留的 429 限流临时冷却：
+        // init 里只在冷却「已过期」时才清（L1200-1204），若上一轮触发 429 后
+        // 30 分钟没等完就重开，未过期的 like_disabled_until 会把整轮点赞全部
+        // 静默吞掉（shouldLike L1896 直接 false）→ 概率上不该出现的整轮 0 赞。
+        // 新会话 = 新的风控窗口，旧冷却不再有意义；会话内限流仍由 handleLikeLimit 维护。
+        Storage.set('like_disabled_until', 0);
+        Storage.set('like_limit_strike', 0);
       }
       // 【v2.7.4 人化】会话起始日钉住：跨零点运行期间每日参数不重摇（见 ensureDailyProfile）
       sessionPinnedDay = this.todayKey();
@@ -3810,8 +3941,8 @@
       this.heartbeat();
       this.startTime = Date.now();
 
-      document.getElementById('btn-auto-start').style.display = 'none';
-      document.getElementById('btn-auto-stop').style.display = 'block';
+      // 【v2.7.8】统一走 setRunButtons（人化/非人化一致的运行态显示）
+      setRunButtons(true);
       document.getElementById('auto-status').textContent = '运行中';
       document.getElementById('status-dot').className = 'status-indicator running';
       this.panel.classList.add('running');
@@ -3859,8 +3990,8 @@
       this.topicBrowser?.stop();
       this.listBrowser?.stop();
 
-      document.getElementById('btn-auto-start').style.display = 'block';
-      document.getElementById('btn-auto-stop').style.display = 'none';
+      // 【v2.7.8】统一走 setRunButtons（人化模式下停止态不显示开始按钮）
+      setRunButtons(false);
       document.getElementById('auto-status').textContent = '已停止';
       document.getElementById('status-dot').className = 'status-indicator stopped';
       this.panel.classList.remove('running');
