@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.8
+// @version      2.7.9
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -1081,15 +1081,27 @@
           return Number(topic.last_read_post_number) || 0;
         }
       }
-      const res = await fetch(`/t/topic/${topicId}.json`, { credentials: 'include' });
-      if (!res.ok) return 0;
-      const data = await res.json();
-      const posts = data && data.post_stream && data.post_stream.posts ? data.post_stream.posts : [];
-      let base = 0;
-      for (const p of posts) {
-        if (p.read && Number(p.post_number) > base) base = Number(p.post_number);
+      // 【v2.7.9 修复卡死】SPA 兜底 fetch 原无超时：网络挂起/服务端慢响应时这里会永久
+      // await，TopicBrowser.start 卡在「打开就卡住、十几分钟无操作」，checkStuck 每 60s
+      // restartBrowsing 重开同一帖也救不回来（新浏览器同样卡在 fetch）。加 8s 超时，
+      // 超时按「从未读过」处理（返回 0），流程照常往下走，不阻断本轮浏览
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const res = await fetch(`/t/topic/${topicId}.json`, { credentials: 'include', signal: controller.signal });
+        if (!res.ok) return 0;
+        const data = await res.json();
+        const posts = data && data.post_stream && data.post_stream.posts ? data.post_stream.posts : [];
+        let base = 0;
+        for (const p of posts) {
+          if (p.read && Number(p.post_number) > base) base = Number(p.post_number);
+        }
+        return base;
+      } catch (e) {
+        return 0;
+      } finally {
+        clearTimeout(timer);
       }
-      return base;
     } catch (e) {
       return 0;
     }
@@ -1754,6 +1766,22 @@
             // 【v2.7.8】楼层上限出口：暂缓点赞不满 4 秒就先等门限走完再判，避免带病退出
             await this.flushLikePending(true);
             break;
+          }
+
+          // 【v2.7.9 修复楼层上限过冲】楼层上限按已滚到的最高楼层实时预判：原实现只在
+          // processVisiblePosts 里当「floor > limit 的楼层进入可视带」时才触发，若大步滚动
+          // 跳过了上限楼，上限就不生效 → 设置 0-3 楼却滚到 4 楼到底、还有滚动趋势。
+          // 每次滚动前按 maxFloorSeen / unreadFloorsRead 与上限比对，达到即收工
+          {
+            const cap = humanMode ? humanFloorTarget() : floorLimit;
+            if (cap > 0) {
+              const reached = floorLimitUnreadOnly ? this.unreadFloorsRead >= cap : this.maxFloorSeen >= cap;
+              if (reached) {
+                log(`已达楼层限制，本帖浏览到第 ${cap} 楼为止`);
+                await this.flushLikePending(true);
+                break;
+              }
+            }
           }
 
           // 帖子实际楼层数硬上限：已知总楼数且已读到最高楼 → 立即收工，
@@ -2471,6 +2499,9 @@
       // 【v2.7.6 组6】本实例的运行租约令牌：启动时与 storage 中的租约 CAS 比对，
       // 区分「这是我写的心跳」与「另一标签页写的心跳」，杜绝双页同跑
       this.leaseToken = '';
+      // 【v2.7.9】同一 URL 连续重启计数：restartBrowsing 原位重建救不回时整页跳列表重来
+      this._sameUrlRestartCount = 0;
+      this._lastRestartUrl = '';
     }
 
     // 附带防多开心跳记录：单键租约 {tabId, token, expireAt}，CAS 用法见 start()
@@ -2571,6 +2602,25 @@
       this.listBrowser?.stop();
       this.heartbeat();
 
+      // 【v2.7.9 修复同帖反复重启/卡死空转】restartBrowsing 每次都会 new 一个浏览器，
+      // 内存态 scannedTopics 全部丢失（新建 TopicListBrowser 会重选「未浏览」的同一批帖）。
+      // 若同一 URL 上连续重启仍无进展（如网络反复挂起、页面损坏），加保护：同一 URL
+      // 连续 3 次重启 → 不再原位重建，直接整页跳回浏览列表强制换环境重来
+      const currentUrl = window.location.href;
+      if (currentUrl === this._lastRestartUrl) {
+        this._sameUrlRestartCount = (this._sameUrlRestartCount || 0) + 1;
+      } else {
+        this._sameUrlRestartCount = 1;
+        this._lastRestartUrl = currentUrl;
+      }
+      if (this._sameUrlRestartCount >= 3) {
+        log(`同一页面连续重启 ${this._sameUrlRestartCount} 次无进展，整页跳回列表重试`);
+        this._sameUrlRestartCount = 0;
+        this._lastRestartUrl = '';
+        window.location.href = getDefaultBrowsePath();
+        return;
+      }
+
       try {
         await this.runBrowserFor(getPageType());
       } catch (error) {
@@ -2612,6 +2662,10 @@
         const oldPageType = this.getPageTypeFromUrl(oldUrl);
         const newPageType = getPageType();
         this.lastUrl = currentUrl;
+        // 【v2.7.9】URL 已变化 = 浏览器有进展：清掉「同一 URL 连续重启」计数，
+        // 避免上一轮的卡死重启保护在正常跳转后被误判触发
+        this._sameUrlRestartCount = 0;
+        this._lastRestartUrl = '';
 
         const pageTypeEl = document.getElementById('page-type');
         if (pageTypeEl) pageTypeEl.textContent = newPageType;
@@ -3214,7 +3268,7 @@
             <div class="stats-row"><span class="stats-label">页面类型</span><span class="stats-value" id="page-type">-</span></div>
             <div class="stats-row"><span class="stats-label">本次帖子/回复</span><span class="stats-value"><span id="session-viewed">0</span> / <span id="session-replies">0</span></span></div>
             <div class="stats-row"><span class="stats-label">本次点赞</span><span class="stats-value" id="session-liked">0</span></div>
-            <div class="stats-row"><span class="stats-label">本次阅读楼层</span><span class="stats-value" id="session-read-count">0</span></div>
+            <div class="stats-row"><span class="stats-label">当前楼层</span><span class="stats-value" id="session-read-count">—</span></div>
             <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
             <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
@@ -3791,6 +3845,15 @@
       const stats = this.history.getStats();
       document.getElementById('session-viewed').textContent = stats.sessionViewed;
       document.getElementById('session-replies').textContent = stats.sessionReplies;
+      // 【v2.7.9 浮窗楼层口径】改为显示「当前帖已读到第几楼」：原 readingTracker.count
+      // 是本会话累计新增未读楼层数（跨帖、只算比上次读到位置更新的楼），页在第 4 楼却
+      // 显示 2，用户误以为楼层识别错。这里直接取活动 TopicBrowser 的最高已读楼层
+      // （maxFloorSeen）；列表页/未运行时显示 — 
+      const readEl = document.getElementById('session-read-count');
+      if (readEl) {
+        const tb = this.topicBrowser;
+        readEl.textContent = tb && tb.isRunning ? `${tb.maxFloorSeen} 楼` : '—';
+      }
       // 【v2.7.5】点赞冷却中面板直接显示剩余分钟，不再静默吞赞
       const likedEl = document.getElementById('session-liked');
       if (likedEl) {
@@ -3802,7 +3865,7 @@
           likedEl.textContent = stats.sessionLiked;
         }
       }
-      document.getElementById('session-read-count').textContent = readingTracker.count;
+      // （v2.7.9）session-read-count 已在上面 v2.7.9 块中按「当前楼层」更新，此处不再覆盖
       // 目标进度：刷帖数 = 浏览的话题个数（翻楼/阅读楼层不计入目标）
       // 【v2.7.0 人化随机】人化模式下进度按今日接管目标（范围随机结果）显示
       const gp = document.getElementById('goal-progress');
@@ -3939,7 +4002,16 @@
         Storage.set('debug_active_until', String(Date.now() + 30 * 60 * 1000));
       }
       this.heartbeat();
-      this.startTime = Date.now();
+      // 【v2.7.9 修复限时刷新重置】startTime 原是实例字段：整页刷新后 autoResume→start()
+      // 把它重置为 Date.now()，单次时长上限（checkStuck 超时 + 面板剩余时长显示）全部
+      // 重来 → 「刷新后又重置到最开始了」。改为：新会话（手动/定时/调试）落盘
+      // run_started_at；自动恢复沿用存储值，刷新后限时从上次剩余继续倒计时
+      if (isManual || resetSessionFlag) {
+        this.startTime = Date.now();
+        Storage.set('run_started_at', this.startTime);
+      } else {
+        this.startTime = parseInt(Storage.get('run_started_at', '0'), 10) || Date.now();
+      }
 
       // 【v2.7.8】统一走 setRunButtons（人化/非人化一致的运行态显示）
       setRunButtons(true);
@@ -3979,6 +4051,8 @@
       // 【v2.7.6 组6】清掉返回路径：本轮结束不留残值，避免下一轮会话 topic 读完
       // 后 returnToList 跳到上一轮留下的旧列表（列表可能已不在浏览目标里）
       Storage.remove('session_return_path');
+      // 【v2.7.9】本轮结束清除会话起始时刻：新会话（手动/定时）会重新落盘，不留旧值
+      Storage.remove('run_started_at');
       sessionPinnedDay = ''; // 【v2.7.4】解除会话起始日钉住，跨天重摇恢复生效
 
       if (this.heartbeatTimer) {
