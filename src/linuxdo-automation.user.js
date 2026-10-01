@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.8.0
+// @version      2.8.1
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -1531,6 +1531,8 @@
       // 反卡顿+反检测：滚动不是恒定 2~4 段等分——真实读者是混合节奏：
       // 偶尔一滚到底（1 段大位移）、偶尔 5~7 碎步、多数时候 2~4 段；
       // 段间停顿也施加偏态扰动（人类手指不会精确均匀地停 90~220ms）。
+      // 【v2.8.0 修复②：滚动丝滑化】每段位移不再瞬间 scrollBy 跳变，
+      // 改为 smoothScrollBy 的 rAF 补间（匀加减速惯性曲线），手感接近鼠标滚轮。
       const jitter = CONFIG.scrollJitter;
       const total = CONFIG.scrollStep + randomInt(-jitter, jitter);
       if (total <= 0) return;
@@ -1552,10 +1554,42 @@
         // 前几段每次只滚掉 45%~65%，最后一段吃掉剩余部分，保证总位移一致
         const seg = (i === steps - 1) ? remaining : Math.round(remaining * (0.45 + Math.random() * 0.2));
         if (seg <= 0) break;
-        window.scrollBy({ top: seg, behavior: 'auto' });
+        await this.smoothScrollBy(seg);
         done += seg;
         if (i < steps - 1) await humanDelay(90, 220);
       }
+    }
+
+    // 【v2.8.0 修复②：滚动丝滑化】把一段位移做成 rAF 补间滚动：
+    // easeInOutSine 匀加减速（起速慢→中段最快→收尾缓）≈ 鼠标滚轮惯性手感，
+    // 每段 300~600ms（碎步 <100px 用 120~250ms 短促补间）。后台标签页 rAF 会被
+    // 节流甚至停摆，用 setTimeout 兜底保证必然完成，避免浏览循环卡死。
+    async smoothScrollBy(distance) {
+      if (!(distance > 0)) return;
+      const startY = window.pageYOffset || document.documentElement.scrollTop;
+      const duration = distance < 100 ? randomInt(120, 250) : randomInt(300, 600);
+      const startTime = performance.now();
+      await new Promise((resolve) => {
+        let finished = false;
+        const finish = () => {
+          if (finished) return;
+          finished = true;
+          clearTimeout(safety);
+          window.scrollTo({ top: startY + distance, behavior: 'auto' });
+          resolve();
+        };
+        // 兜底：后台标签 rAF 不触发也能按时收尾（timeout 里也会滚动到位）
+        const safety = setTimeout(finish, duration + 800);
+        const step = (now) => {
+          if (finished) return;
+          const t = Math.min(1, (now - startTime) / duration);
+          const eased = 0.5 - 0.5 * Math.cos(Math.PI * t); // easeInOutSine 匀加减速
+          window.scrollTo({ top: startY + distance * eased, behavior: 'auto' });
+          if (t < 1) requestAnimationFrame(step);
+          else finish();
+        };
+        requestAnimationFrame(step);
+      });
     }
 
     async scrollToTop() {
