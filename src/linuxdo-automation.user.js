@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.9.3
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）
+// @version      2.9.4
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -942,10 +942,79 @@
 
   // ==================== 工具函数 ====================
 
+  // 【v2.9.4 日志持久化】运行日志环形缓冲：同时落 Storage(auto_logs)，
+  // 整页跳转/刷新后仍可从面板「运行日志」区查看，不再只在控制台可见
+  const MAX_PERSISTED_LOGS = 100;
+  let logRing = [];
+  let logRingLoaded = false;
+  let logRingDirty = false;
+  let logRingTimer = null;
+
+  function ensureLogRingLoaded() {
+    if (logRingLoaded) return;
+    logRingLoaded = true;
+    try {
+      const saved = Storage.get('auto_logs', '[]');
+      const arr = typeof saved === 'string' ? JSON.parse(saved) : saved;
+      if (Array.isArray(arr)) logRing = arr.slice(-MAX_PERSISTED_LOGS);
+    } catch (e) {
+      logRing = [];
+    }
+  }
+
+  function flushLogRing() {
+    if (!logRingDirty) return;
+    logRingDirty = false;
+    try {
+      Storage.set('auto_logs', JSON.stringify(logRing.slice(-MAX_PERSISTED_LOGS)));
+    } catch (e) {
+      logRingDirty = true; // 落盘失败，保留脏标记下次重试
+    }
+  }
+
+  function scheduleLogFlush() {
+    if (logRingTimer) return;
+    logRingTimer = setTimeout(() => {
+      logRingTimer = null;
+      flushLogRing();
+    }, 3000);
+  }
+
   function log(...args) {
+    // 【v2.9.4】全部日志写入环形缓冲（不依赖 debug 开关），内存最多保留 200 条
+    try {
+      ensureLogRingLoaded();
+      const line = `[${new Date().toLocaleTimeString()}] ${args
+        .map(a => (typeof a === 'string' ? a : JSON.stringify(a)))
+        .join(' ')}`;
+      logRing.push(line);
+      if (logRing.length > MAX_PERSISTED_LOGS * 2) {
+        logRing.splice(0, logRing.length - MAX_PERSISTED_LOGS);
+      }
+      logRingDirty = true;
+      scheduleLogFlush();
+    } catch (e) {
+      // 日志缓冲故障不阻断主流程
+    }
     if (CONFIG.debug) {
       console.log(`[LinuxDo自动化|${TAB_ID}]`, new Date().toLocaleTimeString(), ...args);
     }
+  }
+
+  // 页面卸载（整页跳转/手动刷新）前把尾部日志落盘，避免丢失最后几秒
+  window.addEventListener('beforeunload', flushLogRing);
+
+  // 【v2.9.4】渲染面板「运行日志」区；tickClock 每秒调用（内容不变则跳过）
+  let lastLogRendered = '';
+  function renderLogPanel() {
+    const pre = document.getElementById('run-log');
+    if (!pre) return;
+    ensureLogRingLoaded();
+    const text = logRing.slice(-80).join('\n');
+    if (text === lastLogRendered) return;
+    lastLogRendered = text;
+    pre.textContent = text;
+    pre.scrollTop = pre.scrollHeight;
   }
 
   function randomDelay(min, max) {
@@ -2472,6 +2541,33 @@
         return false;
       }
 
+      // 【v2.9.4 风控冷静】冷静期逻辑（人化下开启）：每浏览 N 帖进入冷静期，
+      // 期间暂停找帖直到到期（浮窗显示剩余时间，tickClock 每秒同步）——
+      // 连续刷帖容易触发风控，用户强调「冷静期剩余时间必须可见，否则以为卡死」
+      const coolUntil = parseInt(Storage.get('human_cooldown_until', '0'), 10) || 0;
+      const now = Date.now();
+      if (coolUntil > now) {
+        log(`🤫 冷静期中，剩余 ${Math.ceil((coolUntil - now) / 60000)} 分钟，暂时不找新帖`);
+        while (Date.now() < coolUntil && this.isRunning) {
+          this.onStatsUpdate?.();
+          await humanDelay(8000, 12000);
+        }
+        if (!this.isRunning) return false;
+        Storage.set('human_cooldown_until', 0);
+        log('冷静期结束，恢复正常浏览');
+      } else {
+        const coolInterval = parseInt(Storage.get('human_cooldown_interval', '0'), 10) || 0;
+        const coolCount = parseInt(Storage.get('human_cooldown_count', '0'), 10) || 0;
+        if (humanMode && coolInterval > 0 && coolCount >= coolInterval) {
+          const coolDur = parseInt(Storage.get('human_cooldown_duration', '0'), 10) || 0;
+          Storage.set('human_cooldown_until', Date.now() + coolDur * 60000);
+          Storage.set('human_cooldown_count', 0);
+          log(`已连续浏览 ${coolCount} 帖，触发冷静期 ${coolDur} 分钟：整页刷新避开风控`);
+          window.location.reload();
+          return false;
+        }
+      }
+
       const topicRows = document.querySelectorAll('.topic-list-item, tr[data-topic-id], .topic-list tr');
       const candidates = [];
 
@@ -2526,8 +2622,15 @@
       log(`进入话题: ${pick.topicId}${pick.unread ? '（未读）' : ''}`);
       // 【v2.9.0 人化换区】本分区已浏览帖数 +1（落盘，跨 SPA 跳转存活；换区回来由
       // ctor 重抽目标并清零）。只在「进入话题成功」时计数，保证 0 帖不换区语义准确
-      if (humanMode && isCategoryMode()) {
-        Storage.set('human_switch_count', (Number(Storage.get('human_switch_count', 0)) || 0) + 1);
+      if (humanMode) {
+        Storage.set('human_switch_count', isCategoryMode()
+          ? (Number(Storage.get('human_switch_count', 0)) || 0) + 1
+          : Storage.get('human_switch_count', 0));
+        // 【v2.9.4 风控冷静】本轮已完成浏览计数 +1（落盘，跨整页刷新存活；
+        // findAndEnterUnviewedTopic 顶部在进入下一帖前检查，达阈值即触发冷静期）
+        if ((parseInt(Storage.get('human_cooldown_interval', '0'), 10) || 0) > 0) {
+          Storage.set('human_cooldown_count', (Number(Storage.get('human_cooldown_count', 0)) || 0) + 1);
+        }
       }
       // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
       Storage.set('session_return_path', window.location.pathname);
@@ -2665,8 +2768,23 @@
         ? Math.round(this.stuckTimeout * (parseFloat(Storage.get('human_tempo', '1')) || 1))
         : this.stuckTimeout;
       if (elapsed > stuckMs) {
-        log(`检测到卡住 (${Math.round(elapsed/1000)}秒无活动)，自动重启...`);
-        this.restartBrowsing();
+        // 【v2.9.4 风控】帖页卡住 ≈ 风控拦截：原地重启会重进同一帖再次撞墙，
+        // 直接把当前话题标记已浏览（防止列表回头重选同一帖）后整页跳回列表页。
+        // 列表页/其它页卡住才走原来的原位重启。超时分支在上面已处理，互不影响。
+        if (getPageType() === 'topic') {
+          const stuckTopicId = getCurrentTopicId();
+          if (stuckTopicId) {
+            try { this.history.markTopicViewed(stuckTopicId); } catch (e) {}
+            log(`话题 ${stuckTopicId} 卡住，疑似风控拦截，标记已浏览并跳回列表`);
+          } else {
+            log(`检测到卡住 (${Math.round(elapsed/1000)}秒无活动)，跳回列表重新开始`);
+          }
+          const returnPath = Storage.get('session_return_path') || getDefaultBrowsePath();
+          window.location.href = returnPath;
+        } else {
+          log(`检测到卡住 (${Math.round(elapsed/1000)}秒无活动)，自动重启...`);
+          this.restartBrowsing();
+        }
       }
     }
 
@@ -3318,7 +3436,19 @@
                 <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
                 <span class="goal-unit">分钟（0=不限）</span>
               </div>
-              <div class="row-hint">人化模式：每天在设定范围内随机抽取今日目标、在所选时段内随机定时（含 ±15分~±8小时偏移）；浏览/点赞/翻楼目标全为 0 时无法开始</div>
+              <div class="row row-human-opt-line"><span class="row-label">冷静周期</span>
+                <input type="number" class="floor-input target-input" id="human-cooldown-min" min="0" step="1" value="${Storage.get('human_cooldown_min', 10)}" title="每浏览 N 帖后进入冷静期（在最小~最大之间每轮随机抽一个），期间整页刷新避开连续访问风控；最大填 0 = 关闭冷静期">
+                <span class="goal-unit">~</span>
+                <input type="number" class="floor-input target-input" id="human-cooldown-max" min="0" step="1" value="${Storage.get('human_cooldown_max', 15)}" title="每浏览 N 帖后进入冷静期（在最小~最大之间每轮随机抽一个），期间整页刷新避开连续访问风控；最大填 0 = 关闭冷静期">
+                <span class="goal-unit">帖</span>
+              </div>
+              <div class="row row-human-opt-line"><span class="row-label">冷静时长</span>
+                <input type="number" class="floor-input target-input" id="human-cooldown-dur-min" min="0" step="1" value="${Storage.get('human_cooldown_dur_min', 1)}" title="冷静期持续 M 分钟（每轮随机抽一个），期间自动暂停浏览，浮窗显示剩余时间；最大填 0 = 关闭冷静期">
+                <span class="goal-unit">~</span>
+                <input type="number" class="floor-input target-input" id="human-cooldown-dur-max" min="0" step="1" value="${Storage.get('human_cooldown_dur_max', 2)}" title="冷静期持续 M 分钟（每轮随机抽一个），期间自动暂停浏览，浮窗显示剩余时间；最大填 0 = 关闭冷静期">
+                <span class="goal-unit">分钟</span>
+              </div>
+              <div class="row-hint">人化模式：每天在设定范围内随机抽取今日目标、在所选时段内随机定时（含 ±15分~±8小时偏移）；浏览/点赞/翻楼目标全为 0 时无法开始；冷静期每浏览若干帖自动休息并刷新页面，浮窗会显示剩余时间</div>
             </div>
             <div class="row" id="human-hide-speed"><span class="row-label">速度</span><div class="seg">
               <button class="speed-btn ${currentSpeed==='slow'?'active':''}" data-speed="slow">慢</button>
@@ -3422,11 +3552,16 @@
             <div class="stats-row"><span class="stats-label">本次点赞</span><span class="stats-value" id="session-liked">0</span></div>
             <div class="stats-row"><span class="stats-label">当前楼层</span><span class="stats-value" id="session-read-count">—</span></div>
             <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
+            <div class="stats-row" id="cooldown-row" style="display:none;"><span class="stats-label">冷静期</span><span class="stats-value" id="cooldown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
             <div class="stats-row stats-row-wide"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
             <div class="stats-row stats-row-wide"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
           </div>
+          <details class="log-box" id="run-log-box" title="运行日志最近 ${MAX_PERSISTED_LOGS} 条，页面刷新/跳转后仍保留（v2.9.4）">
+            <summary>运行日志（最近 ${MAX_PERSISTED_LOGS} 条 · 刷新后可查）</summary>
+            <pre id="run-log" style="max-height:150px;overflow:auto;margin:6px 0 0;padding:8px;background:rgba(0,0,0,0.25);border-radius:8px;font:11px/1.5 monospace;color:#d8d8f0;white-space:pre-wrap;word-break:break-all;"></pre>
+          </details>
         </div>
       `;
       document.body.appendChild(panel);
@@ -3537,6 +3672,26 @@
       bindHumanRangeInputs('human-like-min', 'human-like-max', 'like', '点赞');
       bindHumanRangeInputs('human-floor-min', 'human-floor-max', 'floor', '翻楼');
       bindHumanRangeInputs('human-switch-min', 'human-switch-max', 'switch', '换区');
+      // 【v2.9.4 风控冷静】冷静周期/时长范围输入（只存 min~max 范围，每轮启动时重抽
+      // interval/duration；不能复用 bindHumanRangeInputs——setHumanGoalRange 对未知前缀
+      // 会顺带写 human_${prefix}_target，把冷却参数当目标值处理）
+      const bindCooldownRange = (minId, maxId, minKey, maxKey, label) => {
+        const minEl = document.getElementById(minId);
+        const maxEl = document.getElementById(maxId);
+        const apply = () => {
+          const lo = Math.max(0, Math.floor(Number(minEl.value) || 0));
+          const hi = Math.max(0, Math.floor(Number(maxEl.value) || 0));
+          Storage.set(minKey, lo);
+          Storage.set(maxKey, hi);
+          log(`人化${label}范围改为 ${lo}~${hi}${hi === 0 ? '（关闭）' : ''}`);
+        };
+        [minEl, maxEl].forEach(el => {
+          el.addEventListener('keydown', (e) => e.stopPropagation());
+          el.addEventListener('change', apply);
+        });
+      };
+      bindCooldownRange('human-cooldown-min', 'human-cooldown-max', 'human_cooldown_min', 'human_cooldown_max', '冷静周期（帖）');
+      bindCooldownRange('human-cooldown-dur-min', 'human-cooldown-dur-max', 'human_cooldown_dur_min', 'human_cooldown_dur_max', '冷静时长（分钟）');
       const humanDurationInput = document.getElementById('human-duration-input');
       humanDurationInput.addEventListener('keydown', (e) => e.stopPropagation());
       humanDurationInput.addEventListener('change', (e) => {
@@ -3779,6 +3934,22 @@
           const pad = (n) => String(n).padStart(2, '0');
           clockEl.textContent = `${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
         }
+        // 【v2.9.4 风控冷静】冷静期剩余时间：浮窗（统计区镜像）实时显示，
+        // 用户明确要求「必须能看到冷静期多久结束，否则会以为卡死了」
+        const coolRow = document.getElementById('cooldown-row');
+        const coolEl = document.getElementById('cooldown-remain');
+        if (coolRow && coolEl) {
+          const coolUntil = parseInt(Storage.get('human_cooldown_until', '0'), 10) || 0;
+          const coolRemain = coolUntil - Date.now();
+          if (coolRemain > 0) {
+            coolRow.style.display = '';
+            coolEl.textContent = `剩余 ${formatRemain(coolRemain)}`;
+          } else {
+            coolRow.style.display = 'none';
+          }
+        }
+        // 【v2.9.4 日志持久化】每秒同步面板「运行日志」区（内容不变则跳过）
+        renderLogPanel();
       };
       tickClock();
       // 每秒刷新：面板统计区虽然 display:none，MutationObserver 仍会把变化镜像到浮窗
@@ -4145,6 +4316,38 @@
         // 新会话 = 新的风控窗口，旧冷却不再有意义；会话内限流仍由 handleLikeLimit 维护。
         Storage.set('like_disabled_until', 0);
         Storage.set('like_limit_strike', 0);
+        // 【v2.9.4 每轮重随 m02835】人化浏览/点赞目标改为「每轮运行都重新随机」：
+        // ensureDailyProfile 的 drawAutocorrelatedTarget 是多日自相关（60% 概率在昨值
+        // ±15% 内扰动并被范围钳制回夹），一旦命中范围边缘就钉死（用户观察 30~50 恒为 50、
+        // 10~20 恒为 12），且每天只重摇一次 → 「每次开始运行都是 50-12」。
+        // 每轮新会话按面板设定的范围重新均匀抽取并落盘，覆盖当日自相关值
+        // （每日自相关本身保留，供其他字段继续沿用；目标是用户最在意的显性数字）
+        if (humanMode) {
+          const tLo = Math.max(0, Number(Storage.get('human_topic_min', 30)) || 0);
+          const tHi = Math.max(0, Number(Storage.get('human_topic_max', 50)) || 0);
+          const lLo = Math.max(0, Number(Storage.get('human_like_min', 10)) || 0);
+          const lHi = Math.max(0, Number(Storage.get('human_like_max', 20)) || 0);
+          const tt = drawRangeTarget(tLo, tHi);
+          const lt = drawRangeTarget(lLo, lHi);
+          Storage.set('human_topic_target', tt);
+          Storage.set('human_like_target', lt);
+          log(`本轮人化目标重随（每轮随机）：浏览 ${tt > 0 ? tt : '不限'} 帖 / 点赞 ${lt > 0 ? lt : '不限'} 个`);
+          // 【v2.9.4 风控冷静】本轮冷静参数每轮重抽：每浏览 N 帖（面板 min~max 区间随机）
+          // 进入冷静期 M 分钟（浮窗显示剩余时间）；范围上限为 0 = 关闭冷静期
+          const cLo = Math.max(0, Number(Storage.get('human_cooldown_min', 10)) || 0);
+          const cHi = Math.max(0, Number(Storage.get('human_cooldown_max', 15)) || 0);
+          const dLo = Math.max(0, Number(Storage.get('human_cooldown_dur_min', 1)) || 0);
+          const dHi = Math.max(0, Number(Storage.get('human_cooldown_dur_max', 2)) || 0);
+          const coolInterval = cHi > 0 ? drawRangeTarget(cLo, cHi) : 0;
+          const coolDuration = dHi > 0 ? drawRangeTarget(dLo, dHi) : 0;
+          Storage.set('human_cooldown_interval', coolInterval);
+          Storage.set('human_cooldown_duration', coolDuration);
+          Storage.set('human_cooldown_count', 0);
+          Storage.set('human_cooldown_until', 0); // 新会话不继承上一轮残留冷静期
+          if (coolInterval > 0 && coolDuration > 0) {
+            log(`本轮风控计划：每浏览约 ${coolInterval} 帖 → 冷静 ${coolDuration} 分钟（整页刷新避开风控）`);
+          }
+        }
       }
       // 【v2.7.4 人化】会话起始日钉住：跨零点运行期间每日参数不重摇（见 ensureDailyProfile）
       sessionPinnedDay = this.todayKey();
@@ -4415,15 +4618,27 @@
       // 收尾只允许「确实在运行中」的这一次执行——并发重启/换页产生的旧世代浏览器
       // 即使绕过世代令牌（runBrowserFor 的 onFinished）再回调 finishRun，也不会重复收尾
       if (!this.isEnabled) return;
+      // 【v2.9.4 结束原因附统计】stop() 会清 run_started_at，先取 startTime 算好
+      // 附加文本：超时/出错收工时也清楚本轮跑了多久、完成了多少
+      let reasonWithStats = reason;
+      try {
+        const stats = this.history.getStats();
+        const elapsedMin = this.startTime > 0 ? Math.max(0, Math.round((Date.now() - this.startTime) / 60000)) : 0;
+        const effT = humanMode ? humanTopicTarget() : topicTarget;
+        const effL = humanMode ? humanLikeTarget() : likeTarget;
+        const t = effT > 0 ? `${stats.sessionViewed}/${effT}` : String(stats.sessionViewed);
+        const l = effL > 0 ? `${stats.sessionLiked}/${effL}` : String(stats.sessionLiked);
+        reasonWithStats = `${reason}（已运行 ${elapsedMin} 分钟 / 完成 ${t} 帖 · ${l} 赞）`;
+      } catch (e) {}
       this.stop();
       this.history.flushPending();
-      Storage.set('auto_finish_reason', reason);
+      Storage.set('auto_finish_reason', reasonWithStats);
       // 【v2.7.4 修复 d700e51f M3】记录本轮结束时刻：checkSchedule 用它做 60 分钟冷却，
       // 防止跨午夜连环触发（23:50 那轮跑到次日凌晨 00:05 结束后，次日凌晨档 base 落
       // catchup 窗口内又被立即拉起一轮、并提前消费当天配额）
       Storage.set('sched_last_finish_at', Date.now());
-      document.getElementById('auto-status').textContent = `已结束：${reason}`;
-      log(`本轮结束：${reason}`);
+      document.getElementById('auto-status').textContent = `已结束：${reasonWithStats}`;
+      log(`本轮结束：${reasonWithStats}`);
     }
 
     // 面板上展示定时与目标配置的当前状态
