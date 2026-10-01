@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.9.1
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）
+// @version      2.9.2
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -763,6 +763,13 @@
       const el = document.getElementById(`human-hide-${k}`);
       if (el) el.classList.toggle('hidden', humanMode);
     });
+    // 【v2.9.2 修复③】「调试开人化」行只在人化模式开启时显示：
+    // 调试 = 强制人化 + 立即开跑，人化关闭时展示一个「能暗中开启人化」的入口
+    // 会与用户明确选择的人化开关相矛盾，故随 humanMode 一起隐藏（含说明行）
+    const debugRow = document.getElementById('row-debug');
+    if (debugRow) debugRow.classList.toggle('hidden', !humanMode);
+    const debugHint = document.getElementById('row-debug-hint');
+    if (debugHint) debugHint.classList.toggle('hidden', !humanMode);
     // 概率预设同样被接管（人化下每帖重抽点赞概率），开启人化后隐藏；
     // 恢复时按点赞开关状态（点赞关闭时概率行本来就不显示）
     const chanceRow = document.getElementById('like-chance-row');
@@ -3062,6 +3069,10 @@
         }
         /* 与楼层输入同排的紧凑版勾选（只计未读） */
         #linuxdo-auto-panel .floor-check-inline { flex: none; margin-left: 6px; }
+        /* 【v2.9.2 修复①】浮窗设置拆成多行后，拖动开关行内补一句简短说明（不占独立 hint 行） */
+        #linuxdo-auto-panel .row-hint-inline {
+          flex: none; font-size: 10px; color: rgba(255,255,255,0.52); margin-left: 6px;
+        }
         #linuxdo-auto-panel .floor-check input {
           width: 13px; height: 13px; margin: 0; flex: none;
           accent-color: #fff; cursor: pointer;
@@ -3259,10 +3270,10 @@
               <button class="speed-btn human-btn ${!humanMode?'active':''}" data-human="false" title="使用下方手动设置">关闭</button>
             </div></div>
             <div class="row-hint">开启后：速度档位/具体定时/目标数值/高级设置全部由人化算法接管并隐藏，改由下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
-            <div class="row row-debug"><span class="row-label">调试开人化</span>
+            <div class="row row-debug ${humanMode ? '' : ' hidden'}" id="row-debug"><span class="row-label">调试开人化</span>
               <button class="speed-btn debug-btn ${debugMode?'active':''}" id="btn-debug-toggle" title="小开关：一键开启人化模式并跳过每日定时等待，立即开始一轮浏览（调试/尝鲜用，随本轮自动关闭，运行中刷新页面后自动恢复）">${debugMode ? '已开启' : '开启'}</button>
             </div>
-            <div class="row-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（随本轮结束自动关闭；若运行中刷新页面，会自动恢复调试态继续浏览，人化开关仍由上方控制）</div>
+            <div class="row-hint ${humanMode ? '' : ' hidden'}" id="row-debug-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（随本轮结束自动关闭；若运行中刷新页面，会自动恢复调试态继续浏览，人化开关仍由上方控制）</div>
             <div class="row row-human-opt ${humanMode?'':' hidden'}" id="human-options">
               <div class="row-human-opt-title">人化专属设置（开启后生效）</div>
               <div class="row row-human-opt-line"><span class="row-label">时段</span><div class="seg">
@@ -3358,13 +3369,23 @@
               <label class="floor-check" title="面板内不再显示统计信息；勾选后改为页面左上角半透明浮窗实时显示（可拖动到任意位置），取消勾选则任何位置都不显示统计信息">
                 <input type="checkbox" id="floating-stats">半透明信息浮窗
               </label>
+            </div>
+            <div class="row"><span class="row-label">浮窗透明度</span>
               <span class="opacity-wrap" title="调节浮窗背景透明度（5%~90%），拖动滑块实时预览">
                 <input type="range" id="float-opacity" min="5" max="90" step="5" value="30">
                 <span class="opacity-val" id="float-opacity-val">30%</span>
               </span>
+            </div>
+            <div class="row"><span class="row-label">毛玻璃</span>
               <label class="floor-check" title="浮窗毛玻璃背景：勾选=背景带模糊（默认），取消=背景只保留半透明色块（不模糊）">
                 <input type="checkbox" id="float-blur">毛玻璃
               </label>
+            </div>
+            <div class="row" id="float-drag-row"><span class="row-label">拖动</span>
+              <label class="floor-check" title="浮窗拖动开关：勾选=按住浮窗可拖到任意位置（默认）；关闭=浮窗不拦截鼠标/触摸事件，点击直接穿透到下方实际网页">
+                <input type="checkbox" id="float-drag">可拖动
+              </label>
+              <span class="row-hint-inline" id="float-drag-hint">关闭后点击穿透到网页</span>
             </div>
           </div>
           <div id="human-hide-advanced">
@@ -3642,6 +3663,23 @@
           Storage.set('float_blur', e.target.checked);
           applyFloatBlur(e.target.checked);
           log(e.target.checked ? '已开启浮窗毛玻璃背景' : '已关闭浮窗毛玻璃背景');
+        });
+      }
+
+      // 【v2.9.2 修复②：浮窗拖动开关】勾选=按住浮窗可拖到任意位置（默认）；
+      // 关闭=浮窗不再拦截鼠标/触摸（pointer-events:none），点击直接穿透到下方实际网页
+      const floatDragCheck = document.getElementById('float-drag');
+      const applyFloatDrag = (on) => {
+        floatBox.style.pointerEvents = on ? '' : 'none';
+        if (!on) floatBox.classList.remove('dragging');
+      };
+      applyFloatDrag(Storage.get('float_drag', true));
+      if (floatDragCheck) {
+        floatDragCheck.checked = !!Storage.get('float_drag', true);
+        floatDragCheck.addEventListener('change', (e) => {
+          Storage.set('float_drag', e.target.checked);
+          applyFloatDrag(e.target.checked);
+          log(e.target.checked ? '已开启浮窗拖动（按住可拖到任意位置）' : '已关闭浮窗拖动：点击直接穿透到网页');
         });
       }
 
