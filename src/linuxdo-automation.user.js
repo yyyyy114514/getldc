@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.8.1
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退
+// @version      2.9.0
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -721,6 +721,10 @@
       if (humanMode) refreshTopicParams();
       return;
     }
+    if (prefix === 'switch') {
+      log(`人化换区目标范围改为 ${lo}~${hi} 帖${hi === 0 ? '（不换区）' : ''}（每进一个分区重抽）`);
+      return;
+    }
     const key = `human_${prefix}_target`;
     if (humanMode) {
       Storage.set(key, drawRangeTarget(lo, hi));
@@ -734,6 +738,7 @@
   function labelHumanGoal(prefix) {
     if (prefix === 'topic') return '浏览';
     if (prefix === 'floor') return '翻楼';
+    if (prefix === 'switch') return '换区';
     return '点赞';
   }
 
@@ -2356,6 +2361,18 @@
         Storage.set('session_scanned_lists', [...this.scannedLists]);
         Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
       }
+      // 【v2.9.0 人化换区】每进一个分区重抽「浏览满 X~Y 帖就换区」目标并清零计数；
+      // 计数与目标都落盘（带所属分区 key），跨 SPA 整页跳转存活，换区回来接着数
+      if (humanMode && isCategoryMode() && currentListKey) {
+        const swKey = Storage.get('human_switch_section', '');
+        if (swKey !== currentListKey) {
+          const swLo = Math.max(0, Math.floor(Number(Storage.get('human_switch_min', 5)) || 0));
+          const swHi = Math.max(0, Math.floor(Number(Storage.get('human_switch_max', 10)) || 0));
+          Storage.set('human_switch_target', drawRangeTarget(swLo, swHi));
+          Storage.set('human_switch_count', 0);
+          Storage.set('human_switch_section', currentListKey);
+        }
+      }
     }
 
     async start() {
@@ -2364,6 +2381,18 @@
 
       log('开始在列表中查找未浏览的话题...');
       this.scrollController.reset();
+
+      // 【v2.9.0 人化换区】上个分区浏览满 X~Y 帖（换区目标达成）且还有别的所选分区可去时，
+      // 先换下一个分区再找帖，不再整轮锁定一个分区
+      if (this.humanSwitchEnabled() && getBrowseTargets().length >= 2) {
+        const swTarget = Number(Storage.get('human_switch_target', 0)) || 0;
+        const swCount = Number(Storage.get('human_switch_count', 0)) || 0;
+        if (swTarget > 0 && swCount >= swTarget) {
+          log(`人化换区：本分区已浏览 ${swCount} 帖（目标 ${swTarget} 帖），换下一个所选分区`);
+          await this.switchToAnotherList();
+          return;
+        }
+      }
 
       let found = await this.findAndEnterUnviewedTopic();
 
@@ -2410,6 +2439,11 @@
     stop() {
       this.isRunning = false;
       log('停止列表浏览');
+    }
+
+    // 【v2.9.0 人化换区】换区设定是否启用：人化模式 + 分区模式 + 换区上限>0（0=不换区）
+    humanSwitchEnabled() {
+      return humanMode && isCategoryMode() && (Number(Storage.get('human_switch_max', 10)) || 0) > 0;
     }
 
     // dosss 式选帖：收集本页全部话题 → 跳过置顶与已浏览 → 未读优先、同级随机 → 进入
@@ -2474,6 +2508,11 @@
       await humanDelay(300, 600);
 
       log(`进入话题: ${pick.topicId}${pick.unread ? '（未读）' : ''}`);
+      // 【v2.9.0 人化换区】本分区已浏览帖数 +1（落盘，跨 SPA 跳转存活；换区回来由
+      // ctor 重抽目标并清零）。只在「进入话题成功」时计数，保证 0 帖不换区语义准确
+      if (humanMode && isCategoryMode()) {
+        Storage.set('human_switch_count', (Number(Storage.get('human_switch_count', 0)) || 0) + 1);
+      }
       // 记住来源列表页（分区页或全站列表），话题页读完返回时跳回这里
       Storage.set('session_return_path', window.location.pathname);
       // 【反检测 v2.6.9】真人点话题是 Ember 客户端路由（SPA：pushState + XHR 拉
@@ -2511,12 +2550,24 @@
         return;
       }
       const targets = getBrowseTargets();
-      const next = targets.find(t => !this.scannedLists.has(t.key));
+      let next = targets.find(t => !this.scannedLists.has(t.key));
       if (!next) {
-        log('所有浏览目标已浏览完，本轮结束');
-        this.stop();
-        this.onFinished?.('列表已尽');
-        return;
+        // 【v2.9.0 人化换区】所选分区已全部轮过一遍：人化模式开启换区设定（且至少
+        // 有两个所选分区可轮转）时清空已扫记录继续轮转，而不是收工——人在所选
+        // 分区间持续流转直到浏览/点赞目标达成；仅选一个分区时无从轮转，维持收工
+        if (this.humanSwitchEnabled() && targets.length >= 2) {
+          log('人化换区：所选分区已全部轮过一遍，清空已扫记录继续轮转');
+          this.scannedLists.clear();
+          Storage.set('session_scanned_lists', []);
+          Storage.set('session_scanned_lists_epoch', this.history.sessionEpoch);
+          next = targets.find(t => t.key !== getCurrentListFromPath()) || targets[0];
+        }
+        if (!next) {
+          log('所有浏览目标已浏览完，本轮结束');
+          this.stop();
+          this.onFinished?.('列表已尽');
+          return;
+        }
       }
       // 【v2.7.6 组6 A1-M5】跳转前不再 add+落盘：先写切换意图（session_pending_list），
       // 由新页 TopicListBrowser ctor 用 getCurrentListFromPath() 验证实到列表后才标记已扫。
@@ -3099,8 +3150,8 @@
            且压在页面自身的全屏模态之上；降到 2147483645 让弹窗/模态优先覆盖 */
         #linuxdo-stats-float {
           position: fixed; top: 10px; left: 10px; z-index: 2147483645;
-          display: flex; flex-direction: column; gap: 4px;
-          padding: 10px 14px; min-width: 170px;
+          display: flex; flex-wrap: wrap; gap: 4px 12px;
+          padding: 10px 14px; min-width: 170px; max-width: 360px;
           /* 【v2.7.8】透明度可调：滑块写 --ld-float-opacity（默认 0.30），
              旧浏览器无 CSS 变量支持时回退 0.30 */
           background: rgba(16, 12, 34, var(--ld-float-opacity, 0.30));
@@ -3116,9 +3167,11 @@
         }
         #linuxdo-stats-float.dragging { cursor: grabbing; }
         #linuxdo-stats-float.hidden { display: none; }
-        #linuxdo-stats-float .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 0; white-space: nowrap; }
-        #linuxdo-stats-float .stats-label { color: rgba(255,255,255,0.6); margin-right: 14px; }
-        #linuxdo-stats-float .stats-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+        /* 【v2.9.0 浮窗换行】信息行折成两列显示，避免整列太长「竖起来」：
+           每行占半行宽（扣除 gap），10 行信息折成两列 5 行 */
+        #linuxdo-stats-float .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 0; white-space: nowrap; flex: 0 0 calc(50% - 6px); min-width: 0; }
+        #linuxdo-stats-float .stats-label { color: rgba(255,255,255,0.6); margin-right: 10px; flex-shrink: 0; }
+        #linuxdo-stats-float .stats-value { font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
         #linuxdo-stats-float .status-indicator { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
         #linuxdo-stats-float .status-indicator.running { background: #22c55e; animation: float-pulse 1.5s infinite; }
         #linuxdo-stats-float .status-indicator.stopped { background: #f87171; }
@@ -3230,6 +3283,12 @@
                 <span class="goal-unit">~</span>
                 <input type="number" class="floor-input target-input" id="human-floor-max" min="0" step="1" value="${Storage.get('human_floor_max', 0)}" title="每帖浏览前 N 楼即换帖；在最小~最大之间每帖随机抽一个，如 3 表示每帖读到第 3 楼就换帖，0=不限（整帖读完）">
                 <span class="goal-unit">楼</span>
+              </div>
+              <div class="row row-human-opt-line"><span class="row-label">换区目标</span>
+                <input type="number" class="floor-input target-input" id="human-switch-min" min="0" step="1" value="${Storage.get('human_switch_min', 5)}" title="在当前分区浏览满 N 帖后自动换到下一个所选分区；在最小~最大之间每进一个分区随机抽一次，0=不换区（整轮锁定一个分区）">
+                <span class="goal-unit">~</span>
+                <input type="number" class="floor-input target-input" id="human-switch-max" min="0" step="1" value="${Storage.get('human_switch_max', 10)}" title="在当前分区浏览满 N 帖后自动换到下一个所选分区；在最小~最大之间每进一个分区随机抽一次，0=不换区（整轮锁定一个分区）">
+                <span class="goal-unit">帖换区</span>
               </div>
               <div class="row row-human-opt-line"><span class="row-label">时长上限</span>
                 <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
@@ -3443,6 +3502,7 @@
       bindHumanRangeInputs('human-topic-min', 'human-topic-max', 'topic', '浏览');
       bindHumanRangeInputs('human-like-min', 'human-like-max', 'like', '点赞');
       bindHumanRangeInputs('human-floor-min', 'human-floor-max', 'floor', '翻楼');
+      bindHumanRangeInputs('human-switch-min', 'human-switch-max', 'switch', '换区');
       const humanDurationInput = document.getElementById('human-duration-input');
       humanDurationInput.addEventListener('keydown', (e) => e.stopPropagation());
       humanDurationInput.addEventListener('change', (e) => {
