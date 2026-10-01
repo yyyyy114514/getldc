@@ -3172,6 +3172,10 @@
         #linuxdo-stats-float .stats-row { display: flex; justify-content: space-between; align-items: center; margin: 0; white-space: nowrap; flex: 0 0 calc(50% - 6px); min-width: 0; }
         #linuxdo-stats-float .stats-label { color: rgba(255,255,255,0.6); margin-right: 10px; flex-shrink: 0; }
         #linuxdo-stats-float .stats-value { font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; }
+        /* 【v2.9.0 人化长文本】每日定时/人化随机信息太长，半行宽放不下会被省略号截断：
+           这两个宽行独占一整行、文本允许换行完整显示 */
+        #linuxdo-stats-float .stats-row.stats-row-wide { flex: 0 0 100%; white-space: normal; }
+        #linuxdo-stats-float .stats-row.stats-row-wide .stats-value { white-space: normal; overflow: visible; text-overflow: clip; word-break: break-all; }
         #linuxdo-stats-float .status-indicator { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
         #linuxdo-stats-float .status-indicator.running { background: #22c55e; animation: float-pulse 1.5s infinite; }
         #linuxdo-stats-float .status-indicator.stopped { background: #f87171; }
@@ -3390,8 +3394,8 @@
             <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
             <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
-            <div class="stats-row"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
-            <div class="stats-row"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
+            <div class="stats-row stats-row-wide"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
+            <div class="stats-row stats-row-wide"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
           </div>
         </div>
       `;
