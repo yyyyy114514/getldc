@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.9.4
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）
+// @version      2.9.5
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）；v2.9.5 冷静模式总开关（关闭后隐藏冷静周期/时长设置并整轮停用冷静期，开启后每轮按范围重抽冷静参数）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -2544,27 +2544,31 @@
       // 【v2.9.4 风控冷静】冷静期逻辑（人化下开启）：每浏览 N 帖进入冷静期，
       // 期间暂停找帖直到到期（浮窗显示剩余时间，tickClock 每秒同步）——
       // 连续刷帖容易触发风控，用户强调「冷静期剩余时间必须可见，否则以为卡死」
-      const coolUntil = parseInt(Storage.get('human_cooldown_until', '0'), 10) || 0;
-      const now = Date.now();
-      if (coolUntil > now) {
-        log(`🤫 冷静期中，剩余 ${Math.ceil((coolUntil - now) / 60000)} 分钟，暂时不找新帖`);
-        while (Date.now() < coolUntil && this.isRunning) {
-          this.onStatsUpdate?.();
-          await humanDelay(8000, 12000);
-        }
-        if (!this.isRunning) return false;
-        Storage.set('human_cooldown_until', 0);
-        log('冷静期结束，恢复正常浏览');
-      } else {
-        const coolInterval = parseInt(Storage.get('human_cooldown_interval', '0'), 10) || 0;
-        const coolCount = parseInt(Storage.get('human_cooldown_count', '0'), 10) || 0;
-        if (humanMode && coolInterval > 0 && coolCount >= coolInterval) {
-          const coolDur = parseInt(Storage.get('human_cooldown_duration', '0'), 10) || 0;
-          Storage.set('human_cooldown_until', Date.now() + coolDur * 60000);
-          Storage.set('human_cooldown_count', 0);
-          log(`已连续浏览 ${coolCount} 帖，触发冷静期 ${coolDur} 分钟：整页刷新避开风控`);
-          window.location.reload();
-          return false;
+      // 【v2.9.5 冷静模式开关】关闭时整段跳过（interval/until 已在开关处清零，
+      // 这里再兜底一次，防止关闭前已在途的冷静期残留导致异常等待）
+      if (Storage.get('human_cooldown_enabled', 1)) {
+        const coolUntil = parseInt(Storage.get('human_cooldown_until', '0'), 10) || 0;
+        const now = Date.now();
+        if (coolUntil > now) {
+          log(`🤫 冷静期中，剩余 ${Math.ceil((coolUntil - now) / 60000)} 分钟，暂时不找新帖`);
+          while (Date.now() < coolUntil && this.isRunning) {
+            this.onStatsUpdate?.();
+            await humanDelay(8000, 12000);
+          }
+          if (!this.isRunning) return false;
+          Storage.set('human_cooldown_until', 0);
+          log('冷静期结束，恢复正常浏览');
+        } else {
+          const coolInterval = parseInt(Storage.get('human_cooldown_interval', '0'), 10) || 0;
+          const coolCount = parseInt(Storage.get('human_cooldown_count', '0'), 10) || 0;
+          if (humanMode && coolInterval > 0 && coolCount >= coolInterval) {
+            const coolDur = parseInt(Storage.get('human_cooldown_duration', '0'), 10) || 0;
+            Storage.set('human_cooldown_until', Date.now() + coolDur * 60000);
+            Storage.set('human_cooldown_count', 0);
+            log(`已连续浏览 ${coolCount} 帖，触发冷静期 ${coolDur} 分钟：整页刷新避开风控`);
+            window.location.reload();
+            return false;
+          }
         }
       }
 
@@ -3436,6 +3440,12 @@
                 <input type="number" class="floor-input target-input" id="human-duration-input" min="0" step="1" value="${Storage.get('human_duration', 60)}" title="本轮最多运行 N 分钟自动停止，0=不限">
                 <span class="goal-unit">分钟（0=不限）</span>
               </div>
+              <div class="row row-human-opt-line"><span class="row-label">冷静模式</span>
+                <label class="floor-check floor-check-inline" title="开启后显示冷静周期/时长设置并启用冷静期（每浏览若干帖自动休息并刷新页面，浮窗显示剩余时间）；关闭后隐藏设置并整轮停用该功能">
+                  <input type="checkbox" id="human-cooldown-enabled" ${Storage.get('human_cooldown_enabled', 1) ? 'checked' : ''}>开启
+                </label>
+              </div>
+              <div id="human-cooldown-settings" style="display:${Storage.get('human_cooldown_enabled', 1) ? '' : 'none'}">
               <div class="row row-human-opt-line"><span class="row-label">冷静周期</span>
                 <input type="number" class="floor-input target-input" id="human-cooldown-min" min="0" step="1" value="${Storage.get('human_cooldown_min', 10)}" title="每浏览 N 帖后进入冷静期（在最小~最大之间每轮随机抽一个），期间整页刷新避开连续访问风控；最大填 0 = 关闭冷静期">
                 <span class="goal-unit">~</span>
@@ -3447,6 +3457,7 @@
                 <span class="goal-unit">~</span>
                 <input type="number" class="floor-input target-input" id="human-cooldown-dur-max" min="0" step="1" value="${Storage.get('human_cooldown_dur_max', 2)}" title="冷静期持续 M 分钟（每轮随机抽一个），期间自动暂停浏览，浮窗显示剩余时间；最大填 0 = 关闭冷静期">
                 <span class="goal-unit">分钟</span>
+              </div>
               </div>
               <div class="row-hint">人化模式：每天在设定范围内随机抽取今日目标、在所选时段内随机定时（含 ±15分~±8小时偏移）；浏览/点赞/翻楼目标全为 0 时无法开始；冷静期每浏览若干帖自动休息并刷新页面，浮窗会显示剩余时间</div>
             </div>
@@ -3692,6 +3703,28 @@
       };
       bindCooldownRange('human-cooldown-min', 'human-cooldown-max', 'human_cooldown_min', 'human_cooldown_max', '冷静周期（帖）');
       bindCooldownRange('human-cooldown-dur-min', 'human-cooldown-dur-max', 'human_cooldown_dur_min', 'human_cooldown_dur_max', '冷静时长（分钟）');
+      // 【v2.9.5 冷静模式开关】关闭 → 隐藏冷静设置 + 停用冷静期（清空本轮参数与
+      // 在途冷静期，findAndEnterUnviewedTopic 见 interval<=0 即不触发/不等待）；
+      // 开启 → 显示设置，下轮 start() 按范围重抽参数
+      const cooldownEnableCheck = document.getElementById('human-cooldown-enabled');
+      const cooldownSettingsBox = document.getElementById('human-cooldown-settings');
+      const applyCooldownEnabled = (on) => {
+        Storage.set('human_cooldown_enabled', on ? 1 : 0);
+        if (cooldownSettingsBox) cooldownSettingsBox.style.display = on ? '' : 'none';
+        if (!on) {
+          Storage.set('human_cooldown_interval', 0);
+          Storage.set('human_cooldown_duration', 0);
+          Storage.set('human_cooldown_until', 0);
+          Storage.set('human_cooldown_count', 0);
+        }
+      };
+      if (cooldownEnableCheck) {
+        cooldownEnableCheck.addEventListener('change', (e) => {
+          const on = e.target.checked;
+          applyCooldownEnabled(on);
+          log(`冷静模式${on ? '已开启：每轮运行随机抽取冷静周期/时长' : '已关闭：冷静期停用（设置已隐藏）'}`);
+        });
+      }
       const humanDurationInput = document.getElementById('human-duration-input');
       humanDurationInput.addEventListener('keydown', (e) => e.stopPropagation());
       humanDurationInput.addEventListener('change', (e) => {
@@ -3936,12 +3969,13 @@
         }
         // 【v2.9.4 风控冷静】冷静期剩余时间：浮窗（统计区镜像）实时显示，
         // 用户明确要求「必须能看到冷静期多久结束，否则会以为卡死了」
+        // 【v2.9.5 冷静模式开关】关闭时整行隐藏
         const coolRow = document.getElementById('cooldown-row');
         const coolEl = document.getElementById('cooldown-remain');
         if (coolRow && coolEl) {
           const coolUntil = parseInt(Storage.get('human_cooldown_until', '0'), 10) || 0;
           const coolRemain = coolUntil - Date.now();
-          if (coolRemain > 0) {
+          if (Storage.get('human_cooldown_enabled', 1) && coolRemain > 0) {
             coolRow.style.display = '';
             coolEl.textContent = `剩余 ${formatRemain(coolRemain)}`;
           } else {
@@ -4334,18 +4368,27 @@
           log(`本轮人化目标重随（每轮随机）：浏览 ${tt > 0 ? tt : '不限'} 帖 / 点赞 ${lt > 0 ? lt : '不限'} 个`);
           // 【v2.9.4 风控冷静】本轮冷静参数每轮重抽：每浏览 N 帖（面板 min~max 区间随机）
           // 进入冷静期 M 分钟（浮窗显示剩余时间）；范围上限为 0 = 关闭冷静期
-          const cLo = Math.max(0, Number(Storage.get('human_cooldown_min', 10)) || 0);
-          const cHi = Math.max(0, Number(Storage.get('human_cooldown_max', 15)) || 0);
-          const dLo = Math.max(0, Number(Storage.get('human_cooldown_dur_min', 1)) || 0);
-          const dHi = Math.max(0, Number(Storage.get('human_cooldown_dur_max', 2)) || 0);
-          const coolInterval = cHi > 0 ? drawRangeTarget(cLo, cHi) : 0;
-          const coolDuration = dHi > 0 ? drawRangeTarget(dLo, dHi) : 0;
-          Storage.set('human_cooldown_interval', coolInterval);
-          Storage.set('human_cooldown_duration', coolDuration);
-          Storage.set('human_cooldown_count', 0);
-          Storage.set('human_cooldown_until', 0); // 新会话不继承上一轮残留冷静期
-          if (coolInterval > 0 && coolDuration > 0) {
-            log(`本轮风控计划：每浏览约 ${coolInterval} 帖 → 冷静 ${coolDuration} 分钟（整页刷新避开风控）`);
+          // 【v2.9.5 冷静模式开关】开关关闭时参数一律清 0（不抽不启），
+          // 保证列表端 interval<=0 不会触发也不会等待
+          if (!Storage.get('human_cooldown_enabled', 1)) {
+            Storage.set('human_cooldown_interval', 0);
+            Storage.set('human_cooldown_duration', 0);
+            Storage.set('human_cooldown_count', 0);
+            Storage.set('human_cooldown_until', 0);
+          } else {
+            const cLo = Math.max(0, Number(Storage.get('human_cooldown_min', 10)) || 0);
+            const cHi = Math.max(0, Number(Storage.get('human_cooldown_max', 15)) || 0);
+            const dLo = Math.max(0, Number(Storage.get('human_cooldown_dur_min', 1)) || 0);
+            const dHi = Math.max(0, Number(Storage.get('human_cooldown_dur_max', 2)) || 0);
+            const coolInterval = cHi > 0 ? drawRangeTarget(cLo, cHi) : 0;
+            const coolDuration = dHi > 0 ? drawRangeTarget(dLo, dHi) : 0;
+            Storage.set('human_cooldown_interval', coolInterval);
+            Storage.set('human_cooldown_duration', coolDuration);
+            Storage.set('human_cooldown_count', 0);
+            Storage.set('human_cooldown_until', 0); // 新会话不继承上一轮残留冷静期
+            if (coolInterval > 0 && coolDuration > 0) {
+              log(`本轮风控计划：每浏览约 ${coolInterval} 帖 → 冷静 ${coolDuration} 分钟（整页刷新避开风控）`);
+            }
           }
         }
       }
