@@ -644,7 +644,7 @@
       if ((btn.dataset.human === 'true') === humanMode) btn.classList.add('active');
     });
     const statusEl = document.getElementById('human-status');
-    if (statusEl) statusEl.textContent = humanMode ? '已开启（每日随机节奏/时段/目标）' : '未开启';
+    if (statusEl) statusEl.textContent = humanMode ? '已开启' : '未开启';
     syncPanelHumanVisibility();
     if (humanMode) ensureDailyProfile();
     log(`人化随机模式: ${humanMode ? '已开启' : '已关闭'}`);
