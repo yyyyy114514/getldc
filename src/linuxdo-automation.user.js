@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.7.9
+// @version      2.8.0
 // @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -1764,6 +1764,11 @@
 
           if (this.floorLimitReached) {
             // 【v2.7.8】楼层上限出口：暂缓点赞不满 4 秒就先等门限走完再判，避免带病退出
+            // 【v2.8.0 修复③：楼层上限帖 0 赞】上限收工 = 本帖浏览完成：标记 topicFullyBrowsed，
+            // 供 shouldLike 放行 scrollsDone<1 门槛、并让 GAP2 兜底短帖的中后段点赞决策。
+            // 旧实现上限出口不置位 → 0-3 楼短帖在 cap 预判块即收工、scrollsDone 恒 0 →
+            // shouldLike 门槛 `scrollsDone<1&&!fullySeen&&!topicFullyBrowsed` 把点赞全部挡死
+            this.topicFullyBrowsed = true;
             await this.flushLikePending(true);
             break;
           }
@@ -1778,6 +1783,8 @@
               const reached = floorLimitUnreadOnly ? this.unreadFloorsRead >= cap : this.maxFloorSeen >= cap;
               if (reached) {
                 log(`已达楼层限制，本帖浏览到第 ${cap} 楼为止`);
+                // 【v2.8.0 修复③】上限预判收工 = 本帖浏览完成，置位供 shouldLike/GAP2 判定
+                this.topicFullyBrowsed = true;
                 await this.flushLikePending(true);
                 break;
               }
@@ -1805,6 +1812,8 @@
             // 而非设定阈值比例——设定 60% 但实际滚到 73% 就离开时如实记录 73% 处
             log(`本帖读到 ${this.maxFloorSeen}/${this.topicTotalPosts} 楼后中途离开（${Math.round(this.maxFloorSeen / this.topicTotalPosts * 100)}% 处）`);
             // 【v2.7.8】离场出口：补判暂缓点赞后再返回列表
+            // 【v2.8.0 修复③】中途离场 = 本帖浏览完成，置位供 shouldLike/GAP2 判定
+            this.topicFullyBrowsed = true;
             await this.flushLikePending(true);
             break;
           }
@@ -1867,14 +1876,25 @@
     async flushLikePending(waitForGate = false) {
       if (this.likePending.size === 0) return;
       if (waitForGate) {
-        let latestSeen = 0;
-        for (const pid of this.likePending) {
-          const seenAt = this.postSeenAt.get(pid) || this.enteredAt;
-          if (seenAt > latestSeen) latestSeen = seenAt;
-        }
-        const remain = 4000 - (Date.now() - latestSeen);
-        if (remain > 0 && this.isRunning) {
-          await randomDelay(remain, remain + 300);
+        // 【v2.8.0 修复④：停留时长没模拟喜好】本帖预抽为不赞（topicLikeChosen===0）且
+        // 预算兜底不会强制点赞时，离场无需再等满 4 秒点赞门限 —— 赞帖停留、不赞帖快走，
+        // 进主楼→出主楼的时长拉开差异才像「有喜好」。预算兜底判断与 shouldLike 完全一致
+        // （likeGoal-已赞 >= topicGoal-已浏览 时会强制赞主楼，必须继续等门限）
+        const likeGoal = CONFIG.maxLikesPerSession;
+        const topicGoal = CONFIG.maxTopicsPerSession;
+        const budgetForce = humanMode && likeGoal > 0 && topicGoal > 0 &&
+          likeGoal - this.history.sessionLiked >= topicGoal - this.history.sessionViewed;
+        const mayLike = humanMode ? (topicLikeChosen !== 0 || budgetForce) : enableLike;
+        if (mayLike) {
+          let latestSeen = 0;
+          for (const pid of this.likePending) {
+            const seenAt = this.postSeenAt.get(pid) || this.enteredAt;
+            if (seenAt > latestSeen) latestSeen = seenAt;
+          }
+          const remain = 4000 - (Date.now() - latestSeen);
+          if (remain > 0 && this.isRunning) {
+            await randomDelay(remain, remain + 300);
+          }
         }
       }
       for (const pid of [...this.likePending]) {
@@ -3053,7 +3073,9 @@
           border: 1px solid rgba(255,255,255,0.14);
           border-radius: 12px;
           box-shadow: 0 4px 14px rgba(0,0,0,0.16);
-          backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
+          /* 【v2.8.0】毛玻璃开关：checkbox 写 --ld-float-blur（blur(6px) / none，默认开），
+             关掉后背景只有半透明色块不再模糊 */
+          backdrop-filter: var(--ld-float-blur, blur(6px)); -webkit-backdrop-filter: var(--ld-float-blur, blur(6px));
           font-size: 12px; line-height: 1.6; color: #fff;
           cursor: grab; touch-action: none;
           user-select: none; -webkit-user-select: none;
@@ -3241,6 +3263,9 @@
                 <input type="range" id="float-opacity" min="5" max="90" step="5" value="30">
                 <span class="opacity-val" id="float-opacity-val">30%</span>
               </span>
+              <label class="floor-check" title="浮窗毛玻璃背景：勾选=背景带模糊（默认），取消=背景只保留半透明色块（不模糊）">
+                <input type="checkbox" id="float-blur">毛玻璃
+              </label>
             </div>
           </div>
           <div id="human-hide-advanced">
@@ -3501,6 +3526,22 @@
           const clamped = applyFloatOpacity(parseInt(e.target.value, 10) || 30);
           Storage.set('float_opacity', clamped / 100);
           log(`浮窗透明度已调整为 ${clamped}%`);
+        });
+      }
+
+      // 【v2.8.0 修复①：毛玻璃开关】勾选=模糊背景，取消=只留半透明色块。
+      // 写 CSS 变量 --ld-float-blur（blur(6px) / none），默认开启，change 时记忆到 Storage
+      const floatBlurCheck = document.getElementById('float-blur');
+      const applyFloatBlur = (on) => {
+        floatBox.style.setProperty('--ld-float-blur', on ? 'blur(6px)' : 'none');
+      };
+      applyFloatBlur(Storage.get('float_blur', true));
+      if (floatBlurCheck) {
+        floatBlurCheck.checked = !!Storage.get('float_blur', true);
+        floatBlurCheck.addEventListener('change', (e) => {
+          Storage.set('float_blur', e.target.checked);
+          applyFloatBlur(e.target.checked);
+          log(e.target.checked ? '已开启浮窗毛玻璃背景' : '已关闭浮窗毛玻璃背景');
         });
       }
 
