@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.9.7
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）；v2.9.5 冷静模式总开关（关闭后隐藏冷静周期/时长设置并整轮停用冷静期，开启后每轮按范围重抽冷静参数）；v2.9.6 移除冷静期机制，新增每帖「浏览超时」（秒，0=不限）：进入帖子即开始计时，超过设定秒数不论在浏览/点赞/滚动均强制退出本帖返回帖子列表，返回失败自动刷新重试，超时与重试全程日志留痕；v2.9.7 人化状态行显示当天/次日「几点开跑」实际时刻（与定时触发同源计算，跨午夜越界显示明天凌晨、昨天越界写下的凌晨待触发优先、当天已开跑则标注为今日已开跑），仅人化模式显示
+// @version      2.9.8
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）；v2.9.5 冷静模式总开关（关闭后隐藏冷静周期/时长设置并整轮停用冷静期，开启后每轮按范围重抽冷静参数）；v2.9.6 移除冷静期机制，新增每帖「浏览超时」（秒，0=不限）：进入帖子即开始计时，超过设定秒数不论在浏览/点赞/滚动均强制退出本帖返回帖子列表，返回失败自动刷新重试，超时与重试全程日志留痕；v2.9.7 人化状态行显示当天/次日「几点开跑」实际时刻（与定时触发同源计算，跨午夜越界显示明天凌晨、昨天越界写下的凌晨待触发优先、当天已开跑则标注为今日已开跑），仅人化模式显示；v2.9.8 页面加载错误自动回列表（识别 Discourse 错误页「无法加载 xxx.json 出了点问题」结构，进帖失败/列表加载失败/任意时刻停留在错误页均直接返回帖子列表，不等空扫与长时间超时等待，返回目标优先回来源列表并带连跳冷却防死循环）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -1138,6 +1138,45 @@
     return 'other';
   }
 
+  // 【v2.9.8 错误页识别】Discourse 数据端点加载失败时整页渲染错误页：
+  //   <div class="error-page"><div class="face">:(</div><div class="reason">错误</div>
+  //   <div class="url">无法加载 <a href="/unseen.json">/unseen.json</a></div>
+  //   <div class="desc">出了点问题。</div>（还带「返回」「重试」按钮）
+  // 实际 .json 端点名不定（进帖 /t/topic/{id}.json、列表 /unseen.json /new.json ...），
+  // 一律按 DOM 结构识别，不依赖具体文件名。命中即由调用方直接回帖子列表。
+  function isDiscourseErrorPage() {
+    const page = document.querySelector('.error-page');
+    return !!page && !!page.querySelector('.face');
+  }
+
+  // 【v2.9.8 错误页逃逸】识别到错误页后直接整页跳回帖子列表：
+  // 优先回来源列表（session_return_path，进帖/切列表前脚本已存），来源不可用或来源
+  // 就是当前错误路径时，选一个非当前的非失败浏览目标（unseen/unread 相关失败还排除
+  // /unread），避免跳回同一错误页死循环；8 秒连跳冷却防网络整体故障时无限循环跳转。
+  // 整页跳转后若 auto_running 在身，setup() 会自动恢复运行继续浏览。
+  function escapeErrorPageAndReturn(reason) {
+    const urlEl = document.querySelector('.error-page .url a');
+    const failedPath = (urlEl && (urlEl.getAttribute('href') || urlEl.textContent.trim())) || window.location.pathname;
+    const lastEscape = Number(Storage.get('errpage_escape_at', 0)) || 0;
+    if (Date.now() - lastEscape < 8000) return;
+    log(`检测到页面加载错误（无法加载 ${failedPath}），${reason}，直接返回帖子列表`);
+    Storage.set('errpage_escape_at', Date.now());
+    const current = window.location.pathname;
+    const saved = Storage.get('session_return_path', '');
+    let target = '';
+    if (saved && saved !== current && saved !== failedPath) {
+      target = saved;
+    } else {
+      const targets = getBrowseTargets();
+      const isUnseenRelated = failedPath.includes('unseen') || failedPath.includes('unread');
+      const next = targets.find(t =>
+        t.path !== current && t.path !== failedPath && !(isUnseenRelated && t.path === '/unread')
+      ) || targets[0];
+      target = (next && next.path) || '/latest';
+    }
+    window.location.href = target;
+  }
+
   function getPageType() {
     return getPageTypeFromPath(window.location.pathname);
   }
@@ -1758,6 +1797,21 @@
       if (!topicId) {
         log('无法获取话题ID');
         this.stop();
+        return;
+      }
+
+      // 【v2.9.8 错误页识别】进帖即遇到 Discourse 错误页（话题数据拉取失败渲染
+      // 「无法加载 xxx.json」错误页，.json 端点名不定、进帖有概率出现）：
+      // 不等浏览超时/卡死检测，标记本帖已浏览（防止列表回头重选同一帖反复撞墙）
+      // 后立即返回帖子列表；若连跳冷却中未实际跳转，本页也照常走后续兜底
+      if (isDiscourseErrorPage()) {
+        if (topicId) {
+          try { this.history.markTopicViewed(topicId); } catch (e) {}
+          log(`话题 ${topicId} 进帖失败：页面加载错误，立即返回帖子列表`);
+        } else {
+          log('进帖失败：页面加载错误，立即返回帖子列表');
+        }
+        escapeErrorPageAndReturn('进帖失败');
         return;
       }
 
@@ -2533,6 +2587,13 @@
 
     // dosss 式选帖：收集本页全部话题 → 跳过置顶与已浏览 → 未读优先、同级随机 → 进入
     async findAndEnterUnviewedTopic() {
+      // 【v2.9.8 错误页识别】列表页被渲染成 Discourse 错误页（列表数据端点加载失败，
+      // 无法加载 xxx.json）：不再空扫等 5 次空扫阈值，直接换到下一个浏览目标。
+      // 冷却期未实际跳转时返回 false，由 start() 循环继续兜底
+      if (isDiscourseErrorPage()) {
+        escapeErrorPageAndReturn('列表页加载失败');
+        return false;
+      }
       // 目标即时检查（dosss 式：进任何话题前先查目标，达标直接收工）
       if (!this.history.canContinue()) {
         log('全部目标达成，本轮结束');
@@ -2801,6 +2862,13 @@
 
     // 根据页面类型创建对应浏览器并启动；非目标页则跳回列表
     async runBrowserFor(pageType) {
+      // 【v2.9.8 错误页识别】当前页面已是 Discourse 加载失败错误页（进帖时话题数据
+      // 拉取失败 / 列表数据失败都会渲染这种错误页，无法加载 xxx.json）：
+      // 不建任何浏览器，直接回帖子列表，避免空扫等待 / 卡死检测 / 浏览超时长时间空耗
+      if (isDiscourseErrorPage()) {
+        escapeErrorPageAndReturn(pageType === 'topic' ? '进帖失败' : '页面加载失败');
+        return;
+      }
       // 【v2.7.4 修复 8be112f0 H2】世代令牌：本次启动的浏览器只有在仍是最新世代时
       // 才允许收尾（onFinished → finishRun），旧世代因并发重启而残留的浏览器收尾时
       // 不会误杀新一代；创建新浏览器前先停掉旧对象，防止两个浏览器并存运行
@@ -3969,6 +4037,11 @@
           } else {
             btRow.style.display = 'none';
           }
+        }
+        // 【v2.9.8 错误页识别】每秒兜底：运行中停留在 Discourse 错误页（进帖失败/列表
+        // 失败渲染了错误页）时直接回帖子列表。放在浏览超时检查前，错误页不用等超时
+        if (this.isEnabled && isDiscourseErrorPage()) {
+          escapeErrorPageAndReturn('页面加载错误');
         }
         // 【v2.9.6 浏览超时】每秒做一次超时退出检查：到截止时刻即退出本帖返回列表
         this.checkBrowseTimeout?.();
