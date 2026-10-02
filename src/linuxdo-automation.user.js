@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.9.11
+// @version      2.9.12
 // @description  自动浏览 LinuxDo 帖子：滚动阅读、随机点赞、人化反检测节奏、每日定时、分区轮换、浮窗统计
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -865,6 +865,28 @@
     log(`点赞被限流：暂停点赞 ${minutes} 分钟（第 ${strike} 次递退，到期自动恢复）`);
   }
 
+  // 【v2.9.12 点赞上限弹窗】Discourse 每日点赞上限弹窗（文案：「哇！您一直在分享很多爱！今天您已经
+  // 达到 24 小时点赞上限…您可以在 X 小时后再次点赞」——X 会变，不按小时数字面匹配）。
+  // 识别：.dialog-container / #dialog-holder 弹窗 + 文案含「点赞上限」或「分享很多爱」。
+  // 动作：① 自动点「确定」关闭弹窗；② 若本脚本正在运行，置会话级 like_session_disabled 标记
+  // ——本轮剩余时间不再点赞、canContinue 忽略点赞目标（只按浏览目标收工），stop() 时清除
+  function handleLikeLimitDialog() {
+    const holder = document.getElementById('dialog-holder') || document.querySelector('.dialog-container');
+    if (!holder) return;
+    const text = holder.textContent || '';
+    if (!text.includes('点赞上限') && !text.includes('分享很多爱')) return;
+    const confirmBtn = holder.querySelector('.dialog-footer .btn-primary, .dialog-footer .d-button-label')?.closest('button')
+      || holder.querySelector('.dialog-footer button[type="button"]');
+    if (confirmBtn) {
+      try { confirmBtn.click(); } catch (e) {}
+    }
+    if (typeof automation !== 'undefined' && automation && automation.isEnabled &&
+        !Storage.get('like_session_disabled', false)) {
+      Storage.set('like_session_disabled', true);
+      log('检测到每日点赞上限弹窗：本轮运行不再点赞，仅完成浏览目标（确定已自动点击）');
+    }
+  }
+
   function setLikeChance(preset) {
     if (LIKE_CHANCE_PRESETS[preset]) {
       currentLikeChance = preset;
@@ -1552,7 +1574,10 @@
     // 全部目标达成才停：浏览帖数与点赞数二者都达标（0=不限 的项不设门槛）
     canContinue() {
       const maxTopics = CONFIG.maxTopicsPerSession;
-      const maxLikes = CONFIG.maxLikesPerSession;
+      // 【v2.9.12 点赞上限】命中每日点赞上限弹窗后本轮忽略点赞目标：只按浏览目标收工
+      const maxLikes = Storage.get('like_session_disabled', false)
+        ? 0
+        : CONFIG.maxLikesPerSession;
       const anyGoal = maxTopics > 0 || maxLikes > 0;
       if (!anyGoal) return true; // 全不限：一直刷到列表扫完
       const topicsDone = maxTopics <= 0 || this.sessionViewed >= maxTopics;
@@ -2184,6 +2209,8 @@
 
     shouldLike(postElement, postId) {
       if (!enableLike) return false;
+      // 【v2.9.12 点赞上限】命中每日点赞上限弹窗后本轮不再点赞（会话级标记，stop 时清除）
+      if (Storage.get('like_session_disabled', false)) return false;
       // 【v2.7.6 点赞根因修复】4 秒门限改按「该帖首个可见楼层的首见时刻」计（postSeenAt）：
       // 短帖/首屏在读完全部楼层时往往还不满 4 秒，旧判定（enteredAt=浏览器实例创建时刻）
       // 会把整个首屏的点赞机会全部吞掉 → 0 赞。不满 4 秒的楼层由 processVisiblePosts
@@ -3502,6 +3529,7 @@
             <div class="row-hint">开启后：速度档位/具体定时/目标数值/高级设置全部由人化算法接管并隐藏，改由下方人化专属设置每日随机抽取；关闭即恢复手动设置</div>
             <div class="row row-debug ${humanMode ? '' : ' hidden'}" id="row-debug"><span class="row-label">调试开人化</span>
               <button class="speed-btn debug-btn ${debugMode?'active':''}" id="btn-debug-toggle" title="小开关：一键开启人化模式并跳过每日定时等待，立即开始一轮浏览（调试/尝鲜用，随本轮自动关闭，运行中刷新页面后自动恢复）">${debugMode ? '已开启' : '开启'}</button>
+              <button class="speed-btn debug-btn" id="btn-reset-today" title="清空「今日已开跑」记录：每日定时今天还能再触发一轮（当天已开跑又想重跑一轮时用）">重置今日已运行</button>
             </div>
             <div class="row-hint ${humanMode ? '' : ' hidden'}" id="row-debug-hint">调试模式 = 强制开启人化模式 + 立即开始浏览，跳过「每日时段随机」的等待（随本轮结束自动关闭；若运行中刷新页面，会自动恢复调试态继续浏览，人化开关仍由上方控制）</div>
             <div class="row row-human-opt ${humanMode?'':' hidden'}" id="human-options">
@@ -3707,6 +3735,15 @@
           log('调试模式：立即开始一轮人化浏览（跳过每日定时等待）');
           this.start(true, true);
         }
+      });
+
+      // 【v2.9.12 重置今日已运行】清空「今日已开跑」记录：每日定时今天还能再触发一轮
+      document.getElementById('btn-reset-today').addEventListener('click', () => {
+        Storage.set('sched_last_run_date', '');
+        Storage.set('sched_pending_day', '');
+        Storage.set('sched_pending_min', -1);
+        log('已重置今日已运行：今日定时可再次触发');
+        this.updateSchedStatus();
       });
 
       const likeMainOnlyCheck = document.getElementById('like-main-only');
@@ -4055,6 +4092,9 @@
         if (this.isEnabled && isDiscourseErrorPage()) {
           escapeErrorPageAndReturn('页面加载错误');
         }
+        // 【v2.9.12 点赞上限弹窗】每秒检测：每日点赞上限弹窗出现即自动点「确定」；
+        // 运行中则同时切换本轮为「不点赞、只刷浏览目标」（like_session_disabled）
+        handleLikeLimitDialog();
         // 【v2.9.6 浏览超时】每秒做一次超时退出检查：到截止时刻即退出本帖返回列表
         this.checkBrowseTimeout?.();
         // 【v2.9.4 日志持久化】每秒同步面板「运行日志」区（内容不变则跳过）
@@ -4535,6 +4575,8 @@
       // 【v2.9.6 浏览超时】本轮结束清掉截止时刻与「返回中」标记，避免残留影响下一轮
       Storage.remove('browse_deadline');
       Storage.remove('browse_returning');
+      // 【v2.9.12 点赞上限】本轮结束清除「命中点赞上限」会话标记：下一轮重新正常点赞
+      Storage.remove('like_session_disabled');
       sessionPinnedDay = ''; // 【v2.7.4】解除会话起始日钉住，跨天重摇恢复生效
 
       if (this.heartbeatTimer) {
