@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手
 // @namespace    https://linux.do/
-// @version      2.9.9
-// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）；v2.9.5 冷静模式总开关（关闭后隐藏冷静周期/时长设置并整轮停用冷静期，开启后每轮按范围重抽冷静参数）；v2.9.6 移除冷静期机制，新增每帖「浏览超时」（秒，0=不限）：进入帖子即开始计时，超过设定秒数不论在浏览/点赞/滚动均强制退出本帖返回帖子列表，返回失败自动刷新重试，超时与重试全程日志留痕；v2.9.7 人化状态行显示当天/次日「几点开跑」实际时刻（与定时触发同源计算，跨午夜越界显示明天凌晨、昨天越界写下的凌晨待触发优先、当天已开跑则标注为今日已开跑），仅人化模式显示；v2.9.8 页面加载错误自动回列表（识别 Discourse 错误页「无法加载 xxx.json 出了点问题」结构，进帖失败/列表加载失败/任意时刻停留在错误页均直接返回帖子列表，不等空扫与长时间超时等待，返回目标优先回来源列表并带连跳冷却防死循环）；v2.9.9 跨天自动刷新「几点开跑」状态行（页面 24 小时挂着不刷新，00:00 后自动更新为今天的开跑时刻与今日目标，「今日已开跑」标注同步复位）
+// @version      2.9.10
+// @description  自动浏览帖子、滚动查看所有回复、随机点赞、避免重复浏览、可限定每帖浏览楼层数、支持所选分区轮换、每日定时自动开始与浏览/点赞/时长目标与浮窗时钟；高级设置可调翻页/阅读/点赞速率与概率，内置反检测随机节奏与反指纹措施（不包装 fetch/XHR、点击式 SPA 导航、偏态人化延迟）；「人化随机」模式接管速度/定时/目标/高级设置，每天按普通人权重摇节奏·时段·目标·翻楼数、每帖重抽点赞概率与阅读/滚动节奏/中途离场/翻楼上限，点赞走页面真实按钮（含偶发犹豫，v2.7.3 修复点赞确认节点与限流冷却，点赞按今日目标自适应加成）；「调试模式」一键强制人化并立即开跑（跳过每日定时等待）；v2.7.4 修复并发互斥（世代令牌）/点赞时机与已读计数/跨午夜定时连环触发/多标签并发重摇/手动点赞重渲染误计；v2.7.6 修复零赞根因（点赞改每帖一次决策+真实按钮确认与限流递退）、行为分布对数正态化、每日目标多日自相关、调试模式刷新恢复续跑、列表轮换落盘验证与同型跳转接管、多开改为单键租约 CAS；v2.7.7 翻楼目标恢复绝对楼层（0-3 即每帖随机翻 1~3 楼，取消百分比深度）、翻到底自动收工不再空翻；v2.7.8 短帖零赞与数据不更新根因修复（暂缓点赞统一补判+新会话清限流冷却+无新楼层兜底标记已浏览）、人化按钮显隐统一、浮窗透明度可调、短帖点赞门槛与中后段目标回退；v2.8.0 人化四修复（毛玻璃开关/楼层上限与离场出口恢复短帖点赞/不赞帖快走模拟喜好）；v2.8.1 滚动匀加减速惯性丝滑化；v2.9.0 人化换区目标（每分区浏览 X~Y 帖自动换下一个所选分区，告别整轮锁定一个分区）与浮窗信息折行两列显示；v2.9.1 换帖提速（进帖最短停留从 5 秒降到 3 秒，刷楼结束到进下一帖的停顿减半）；v2.9.2 浮窗设置各占一行清晰展示、浮窗拖动开关（关闭后点击穿透到网页）、调试开人化仅在开启人化时显示；v2.9.3 修复「只赞主帖」点赞率塌缩（人化中后段点赞档整段静默沉没：非主楼被拦截+主楼在浏览中途被弹出补判队列导致离场回退失效，现只赞主帖时该档并入主楼档，45% 赞主楼/55% 不赞）；v2.9.4 风控冷静期（每浏览 N 帖自动整页刷新休息并暂停，浮窗实时显示剩余时间，防连续访问触发风控）、帖页卡住自动标记已浏览并跳回列表、结束原因附已运行分钟与完成量、人化目标改为每轮运行重随（30~50/10~20 不再恒为 50/12）、运行日志持久化（刷新后可查看）；v2.9.5 冷静模式总开关（关闭后隐藏冷静周期/时长设置并整轮停用冷静期，开启后每轮按范围重抽冷静参数）；v2.9.6 移除冷静期机制，新增每帖「浏览超时」（秒，0=不限）：进入帖子即开始计时，超过设定秒数不论在浏览/点赞/滚动均强制退出本帖返回帖子列表，返回失败自动刷新重试，超时与重试全程日志留痕；v2.9.7 人化状态行显示当天/次日「几点开跑」实际时刻（与定时触发同源计算，跨午夜越界显示明天凌晨、昨天越界写下的凌晨待触发优先、当天已开跑则标注为今日已开跑），仅人化模式显示；v2.9.8 页面加载错误自动回列表（识别 Discourse 错误页「无法加载 xxx.json 出了点问题」结构，进帖失败/列表加载失败/任意时刻停留在错误页均直接返回帖子列表，不等空扫与长时间超时等待，返回目标优先回来源列表并带连跳冷却防死循环）；v2.9.9 跨天自动刷新「几点开跑」状态行（页面 24 小时挂着不刷新，00:00 后自动更新为今天的开跑时刻与今日目标，「今日已开跑」标注同步复位）；v2.9.10 人化浮窗信息精简（每日定时栏只显示今日几点开跑、翻楼与时长移出展示，新开「每日目标」栏仅人化显示且只含帖/赞，全局删除「本次帖子/回复」「本次点赞」两栏，统计信息仍只经浮窗展示）
 // @author       yyyy114514
 // @match        https://linux.do/*
 // @downloadURL  https://raw.githubusercontent.com/yyyyy114514/getldc/master/src/linuxdo-automation.user.js
@@ -654,6 +654,9 @@
     if (statusEl) statusEl.textContent = humanMode ? '已开启' : '未开启';
     syncPanelHumanVisibility();
     if (humanMode) ensureDailyProfile();
+    // 【v2.9.10】切换人化开关立即刷新「每日定时/每日目标」状态行（每日目标栏仅人化显示，
+    // 开/关瞬间浮窗同步跟上；调试模式强制人化走 setHumanMode 同样生效）
+    if (typeof automation !== 'undefined') automation.updateSchedStatus();
     log(`人化随机模式: ${humanMode ? '已开启' : '已关闭'}`);
   }
 
@@ -3642,14 +3645,13 @@
           <div class="stats">
             <div class="stats-row"><span class="stats-label">状态</span><span class="stats-value"><span class="status-indicator stopped" id="status-dot"></span><span id="auto-status">未启动</span></span></div>
             <div class="stats-row"><span class="stats-label">页面类型</span><span class="stats-value" id="page-type">-</span></div>
-            <div class="stats-row"><span class="stats-label">本次帖子/回复</span><span class="stats-value"><span id="session-viewed">0</span> / <span id="session-replies">0</span></span></div>
-            <div class="stats-row"><span class="stats-label">本次点赞</span><span class="stats-value" id="session-liked">0</span></div>
             <div class="stats-row"><span class="stats-label">当前楼层</span><span class="stats-value" id="session-read-count">—</span></div>
             <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
             <div class="stats-row stats-row-wide" id="browse-timeout-row" style="display:none;"><span class="stats-label">本帖超时</span><span class="stats-value" id="browse-timeout-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
             <div class="stats-row stats-row-wide"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
+            <div class="stats-row stats-row-wide" id="daily-goal-row" style="display:none;"><span class="stats-label">每日目标</span><span class="stats-value" id="daily-goal">-</span></div>
             <div class="stats-row stats-row-wide"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
           </div>
           <details class="log-box" id="run-log-box" title="运行日志最近 ${MAX_PERSISTED_LOGS} 条，页面刷新/跳转后仍保留（v2.9.4）">
@@ -4307,8 +4309,8 @@
 
     updateStats() {
       const stats = this.history.getStats();
-      document.getElementById('session-viewed').textContent = stats.sessionViewed;
-      document.getElementById('session-replies').textContent = stats.sessionReplies;
+      // 【v2.9.10 本次统计栏已移除】session-viewed / session-replies / session-liked 元素
+      // 已全局删除，本次浏览/点赞计数不再展示（保留目标进度/当前楼层），引用一并移除
       // 【v2.7.9 浮窗楼层口径】改为显示「当前帖已读到第几楼」：原 readingTracker.count
       // 是本会话累计新增未读楼层数（跨帖、只算比上次读到位置更新的楼），页在第 4 楼却
       // 显示 2，用户误以为楼层识别错。这里直接取活动 TopicBrowser 的最高已读楼层
@@ -4318,18 +4320,8 @@
         const tb = this.topicBrowser;
         readEl.textContent = tb && tb.isRunning ? `${tb.maxFloorSeen} 楼` : '—';
       }
-      // 【v2.7.5】点赞冷却中面板直接显示剩余分钟，不再静默吞赞
-      const likedEl = document.getElementById('session-liked');
-      if (likedEl) {
-        const until = parseInt(Storage.get('like_disabled_until', 0), 10) || 0;
-        if (Date.now() < until) {
-          const mins = Math.max(1, Math.ceil((until - Date.now()) / 60000));
-          likedEl.textContent = `${stats.sessionLiked}（冷却中 ${mins} 分）`;
-        } else {
-          likedEl.textContent = stats.sessionLiked;
-        }
-      }
       // （v2.7.9）session-read-count 已在上面 v2.7.9 块中按「当前楼层」更新，此处不再覆盖
+      // （v2.9.10）点赞冷却提示原挂在已删除的「本次点赞」栏上，随栏一并移除
       // 目标进度：刷帖数 = 浏览的话题个数（翻楼/阅读楼层不计入目标）
       // 【v2.7.0 人化随机】人化模式下进度按今日接管目标（范围随机结果）显示
       const gp = document.getElementById('goal-progress');
@@ -4752,15 +4744,8 @@
         ensureDailyProfile();
         const tt = humanTopicTarget();
         const lt = humanLikeTarget();
-        const ft = humanFloorTarget();
-        const dm = humanDurationMin();
         const remain = tt > 0 ? tt : '不限';
         const likes = lt > 0 ? lt : '不限';
-        // 【v2.7.7】翻楼恢复绝对楼层：显示面板配置的范围（默认 0~0 = 不限整帖读完）
-        const fLo = parseInt(Storage.get('human_floor_min', 0), 10);
-        const fHi = parseInt(Storage.get('human_floor_max', 0), 10);
-        const floors = fHi > 0 ? `${fLo}~${fHi} 楼` : '不限';
-        const minutes = dm > 0 ? `${dm} 分` : '不限';
         // 【v2.9.7】人化状态行显示实际开跑时刻：与 checkSchedule 同源计算（基准+偏移，
         // 跨午夜越界 → 明天凌晨；昨天越界写下的今天凌晨 pending 优先）；当天已开跑则标注
         let whenText;
@@ -4782,7 +4767,14 @@
             ? `今天 ${hh}:${mm} 开跑`
             : (targetMin >= 1440 ? `明天 ${hh}:${mm} 开跑` : `今天 ${hh}:${mm} 开跑`);
         }
-        display = `人化接管 · ${whenText} · 今日目标 ${remain} 帖 / ${likes} 赞 / 翻楼 ${floors} / ${minutes}`;
+        // 【v2.9.10】每日定时栏只显示「今日几点开跑」：去掉「人化接管 ·」前缀与
+        // 后面的「今日目标 …」长串（帖/赞移入下方独立的「每日目标」栏）
+        display = whenText;
+        // 【v2.9.10 每日目标栏】只显示帖/赞（翻楼数/时长不再展示），仅人化模式显示
+        const dailyGoalEl = document.getElementById('daily-goal');
+        if (dailyGoalEl) dailyGoalEl.textContent = `${remain} 帖 / ${likes} 赞`;
+        const dailyGoalRow = document.getElementById('daily-goal-row');
+        if (dailyGoalRow) dailyGoalRow.style.display = '';
       } else {
         const remain = topicTarget > 0 ? topicTarget : '不限';
         const likes = likeTarget > 0 ? likeTarget : '不限';
@@ -4790,6 +4782,9 @@
         display = scheduleEnabled
           ? `${scheduleTime} 自动开始 · 目标 ${remain} 帖 / ${likes} 赞 / ${minutes}`
           : '每日定时关闭';
+        // 【v2.9.10】每日目标栏仅人化模式显示，非人化隐藏
+        const dailyGoalRow = document.getElementById('daily-goal-row');
+        if (dailyGoalRow) dailyGoalRow.style.display = 'none';
       }
       el.textContent = display;
     }
