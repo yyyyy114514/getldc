@@ -3647,12 +3647,12 @@
             <div class="stats-row"><span class="stats-label">页面类型</span><span class="stats-value" id="page-type">-</span></div>
             <div class="stats-row"><span class="stats-label">当前楼层</span><span class="stats-value" id="session-read-count">—</span></div>
             <div class="stats-row"><span class="stats-label">目标进度</span><span class="stats-value" id="goal-progress">-</span></div>
-            <div class="stats-row stats-row-wide" id="browse-timeout-row" style="display:none;"><span class="stats-label">本帖超时</span><span class="stats-value" id="browse-timeout-remain">-</span></div>
+            <div class="stats-row" id="browse-timeout-row" style="display:none;"><span class="stats-label">本帖超时</span><span class="stats-value" id="browse-timeout-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">限时剩余</span><span class="stats-value" id="countdown-remain">-</span></div>
             <div class="stats-row"><span class="stats-label">当前时间</span><span class="stats-value" id="float-clock">-</span></div>
             <div class="stats-row"><span class="stats-label">每日定时</span><span class="stats-value" id="sched-status">-</span></div>
             <div class="stats-row" id="daily-goal-row" style="display:none;"><span class="stats-label">每日目标</span><span class="stats-value" id="daily-goal">-</span></div>
-            <div class="stats-row stats-row-wide"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
+            <div class="stats-row"><span class="stats-label">人化随机</span><span class="stats-value" id="human-status">${humanMode ? '已开启' : '未开启'}</span></div>
           </div>
           <details class="log-box" id="run-log-box" title="运行日志最近 ${MAX_PERSISTED_LOGS} 条，页面刷新/跳转后仍保留（v2.9.4）">
             <summary>运行日志（最近 ${MAX_PERSISTED_LOGS} 条 · 刷新后可查）</summary>
