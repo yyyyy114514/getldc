@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手 v3（人化专用）
 // @namespace    https://linux.do/
-// @version      3.1.0
+// @version      3.1.1
 // @description  自动浏览 LinuxDo 帖子：滚动阅读、随机点赞、人化反检测节奏、每日定时、分区轮换、浮窗统计。v3 为仅人化模式专用版（无手动模式/人化开关，加载即恒开启人化随机），支持定时启动、常驻开始/停止按钮
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -2740,6 +2740,8 @@
       this.lastUrl = window.location.href;
       this.urlCheckInterval = null;
       this.schedTimer = null;
+      // 【v3 延迟修复】定时轮询的 visibilitychange/focus 补查监听只绑定一次（见 startScheduler）
+      this._schedVisBound = false;
       // 【v2.7.4 修复 8be112f0 H2】浏览器世代令牌：checkStuck.restartBrowsing 与
       // checkUrlChange.handlePageTypeChange 可能并发各自创建一个 Topic/ListBrowser，
       // 导致楼层双计/重复点赞/onFinished 被调用两次。每次 runBrowserFor 递增世代，
@@ -4442,8 +4444,22 @@
     startScheduler() {
       if (this.schedTimer) return;
       this.schedTimer = setInterval(() => this.checkSchedule(), 30000);
+      // 【v3 延迟修复】浏览器会冻结/节流后台标签页的 setInterval（Chrome Memory Saver 会整页
+      // 挂起、Intensive Wake Up Throttling 隐藏 5 分钟后降到 1 次/分钟），定时轮询在标签页被
+      // 切到后台时会停摆，回到页面才恢复——于是「到点没跑、过几分钟才突然开始」。这里在页面
+      // 重新可见/聚焦时立即补查一次：目标时刻已过但仍在 catchup 窗口（人化 120 分钟）内就会
+      // 马上开跑，不再干等下一个被节流的 tick。只绑定一次，避免重复监听。
+      if (!this._schedVisBound) {
+        this._schedVisBound = true;
+        document.addEventListener('visibilitychange', () => {
+          if (document.visibilityState === 'visible') this.checkSchedule();
+        });
+        window.addEventListener('focus', () => this.checkSchedule());
+      }
       this.checkSchedule();
-      log('每日定时检查已启动（每 30 秒一次）');
+      // 顺带在启动日志里带出定时总闸状态：开关关闭时轮询照常启动但 checkSchedule 会直接返回，
+      // 用户看到「到点不自动运行」时能一眼分辨是开关被关了还是轮询问题
+      log(`每日定时检查已启动（每 30 秒一次）${scheduleEnabled ? '' : ' · ⚠️ 定时启动开关已关闭，不会自动开始'}`);
     }
 
     stopScheduler() {
