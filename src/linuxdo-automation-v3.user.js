@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手 v3（人化专用）
 // @namespace    https://linux.do/
-// @version      3.1.1
+// @version      3.2.0
 // @description  自动浏览 LinuxDo 帖子：滚动阅读、随机点赞、人化反检测节奏、每日定时、分区轮换、浮窗统计。v3 为仅人化模式专用版（无手动模式/人化开关，加载即恒开启人化随机），支持定时启动、常驻开始/停止按钮
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -857,6 +857,56 @@
         !Storage.get('like_session_disabled', false)) {
       Storage.set('like_session_disabled', true);
       log('检测到每日点赞上限弹窗：本轮运行不再点赞，仅完成浏览目标（确定已自动点击）');
+    }
+  }
+
+  // 【v3.2.0 操作频繁弹窗】Discourse 风控提示（文案类似「您执行此操作次数过多，请 n 秒后再试」，
+  // 原文每次不同，只按关键词匹配，不匹配完整句子）。识别：与点赞上限弹窗相同的
+  // .dialog-container / #dialog-holder + 文案命中「次数过多/过于频繁/…」类关键词。
+  // 动作：① 自动点「确定」关闭弹窗；② 若本脚本正在运行，调 automation.pauseForRateLimit(n)
+  // ——暂停所有操作 n 秒（到期自动恢复），期间跳过卡死检测/浏览超时/滚动点赞等一切动作
+  function handleRateLimitDialog() {
+    const holder = document.getElementById('dialog-holder') || document.querySelector('.dialog-container');
+    if (!holder) return;
+    const text = holder.textContent || '';
+    // 与点赞上限弹窗互斥：那是另一类提示，交给 handleLikeLimitDialog 处理
+    if (text.includes('点赞上限') || text.includes('分享很多爱')) return;
+    // 关键词匹配（不完整匹配原话）：次数过多 / 过于频繁 / 操作过快 / 请稍后再试 等中文变体 + 英文变体
+    const rateLimitRe = /次数过多|过于频繁|太频繁|操作过快|操作频繁|请求过多|频率过高|太快|频繁|请稍后|秒后再试|稍后再试|稍后重试|too (many|frequently|fast)|slow ?down|rate limit|try again in|please wait/i;
+    if (!rateLimitRe.test(text)) return;
+    // 提取冷却秒数：优先「n 秒」，其次「n 分钟」，默认 60 秒，clamp 5..3600
+    let secs = 60;
+    let m = text.match(/(\d+)\s*秒/) || text.match(/in\s+(\d+)\s*seconds?/i);
+    if (m) {
+      secs = parseInt(m[1], 10);
+    } else {
+      m = text.match(/(\d+)\s*分钟/) || text.match(/in\s+(\d+)\s*minutes?/i);
+      if (m) secs = parseInt(m[1], 10) * 60;
+    }
+    secs = Math.max(5, Math.min(secs, 3600));
+    const confirmBtn = holder.querySelector('.dialog-footer .btn-primary, .dialog-footer .d-button-label')?.closest('button')
+      || holder.querySelector('.dialog-footer button[type="button"]');
+    if (confirmBtn) {
+      try { confirmBtn.click(); } catch (e) {}
+    }
+    if (typeof automation !== 'undefined' && automation && automation.isEnabled) {
+      // 只在剩余冷却不足新时长时续期：同一弹窗每秒重复命中不会把冷却越拖越长
+      if (automation._rateLimitUntil < Date.now() + secs * 1000) {
+        automation.pauseForRateLimit(secs);
+      }
+      log(`检测到操作过于频繁弹窗：暂停所有操作 ${secs} 秒（确定已自动点击，到期自动恢复）`);
+    } else {
+      log(`检测到操作频繁弹窗，已自动点击确定关闭（未运行，无需暂停）`);
+    }
+  }
+
+  // 【v3.2.0 操作频繁弹窗】限流冷却等待：命中「操作次数过多，n 秒后再试」弹窗后暂停
+  // 所有操作 n 秒。浏览循环（话题/列表）循环顶调用：冷却期内每 1 秒醒一次检查，
+  // 冷却结束或被手动停止（isEnabled=false）立即放行
+  async function awaitRateLimitCooldown() {
+    while (typeof automation !== 'undefined' && automation && automation.isEnabled &&
+           automation.rateLimitRemain() > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
     }
   }
 
@@ -1922,6 +1972,10 @@
 
       while (this.isRunning) {
         try {
+          // 【v3.2.0 操作频繁弹窗】限流冷却中暂停所有操作：等冷却结束再继续滚动/点赞，
+          // 每 1 秒醒一次检查（被手动停止会立即退出）
+          await awaitRateLimitCooldown();
+          if (!this.isRunning) break;
           // 【v2.7.7】捕获本轮是否有新楼层入眼：到底+无新楼+等待后仍无新内容 → 收工。
           // 修复「翻到底还是试着翻」：SPA 场景总楼数未知（topicTotalPosts=0）时
           // 旧代码只靠 isContentFullyLoaded 兜底，页面高度被懒加载/浮动元素反复撑起
@@ -2534,6 +2588,10 @@
 
       while (this.isRunning && !found) {
         try {
+          // 【v3.2.0 操作频繁弹窗】限流冷却中暂停所有操作：等冷却结束再继续滚动/进帖，
+          // 每 1 秒醒一次检查（被手动停止会立即退出）
+          await awaitRateLimitCooldown();
+          if (!this.isRunning) break;
           this.onStatsUpdate?.();
 
           if (this.scrollController.isAtBottom()) {
@@ -2754,6 +2812,22 @@
       // 【v2.7.9】同一 URL 连续重启计数：restartBrowsing 原位重建救不回时整页跳列表重来
       this._sameUrlRestartCount = 0;
       this._lastRestartUrl = '';
+      // 【v3.2.0 操作频繁弹窗】限流冷却截止时刻（ms）：命中「操作次数过多，n 秒后再试」
+      // 弹窗后置位，到期（rateLimitRemain()=0）自动恢复；_rlPauseActive 防重复打印恢复日志
+      this._rateLimitUntil = 0;
+      this._rlPauseActive = false;
+    }
+
+    // 【v3.2.0 操作频繁弹窗】命中风控弹窗：暂停所有操作 n 秒（浏览循环等待、卡死/超时
+    // 检查跳过）。到期自动恢复，无需任何手动介入
+    pauseForRateLimit(seconds) {
+      this._rateLimitUntil = Date.now() + seconds * 1000;
+    }
+
+    // 【v3.2.0 操作频繁弹窗】剩余冷却毫秒数：停止状态下恒 0（停止即解除冷却）
+    rateLimitRemain() {
+      if (!this.isEnabled) return 0;
+      return Math.max(0, this._rateLimitUntil - Date.now());
     }
 
     // 附带防多开心跳记录：单键租约 {tabId, token, expireAt}，CAS 用法见 start()
@@ -2776,6 +2850,9 @@
 
     checkStuck() {
       if (!this.isEnabled) return;
+      // 【v3.2.0 操作频繁弹窗】限流冷却中不做卡死判断：暂停操作不是卡死，
+      // 等冷却结束再恢复检测（否则冷却期无活动会被误判卡死跳列表）
+      if (this.rateLimitRemain() > 0) return;
       // 单次时长上限：跑满设定分钟数就收工（0=不限）。
       // 【v2.7.0 人化随机】人化模式下时长由 human_duration 定死接管（用户填的时长上限被隐藏）
       const limitMin = humanMode ? humanDurationMin() : maxMinutes;
@@ -2830,6 +2907,9 @@
     // 跨刷新存活，刷新后 runBrowserFor 直接再试返回而不重新进帖浏览，避免死循环空转）
     checkBrowseTimeout() {
       if (!this.isEnabled) return;
+      // 【v3.2.0 操作频繁弹窗】限流冷却中不强制退帖：暂停操作期间不导航不操作，
+      // 等冷却结束再恢复超时检查
+      if (this.rateLimitRemain() > 0) return;
       if (getPageType() !== 'topic') return;
       const deadline = parseInt(Storage.get('browse_deadline', '0'), 10) || 0;
       if (deadline <= 0 || Date.now() < deadline) return;
@@ -3925,16 +4005,30 @@
             btRow.style.display = 'none';
           }
         }
-        // 【v2.9.8 错误页识别】每秒兜底：运行中停留在 Discourse 错误页（进帖失败/列表
-        // 失败渲染了错误页）时直接回帖子列表。放在浏览超时检查前，错误页不用等超时
-        if (this.isEnabled && isDiscourseErrorPage()) {
-          escapeErrorPageAndReturn('页面加载错误');
-        }
         // 【v2.9.12 点赞上限弹窗】每秒检测：每日点赞上限弹窗出现即自动点「确定」；
         // 运行中则同时切换本轮为「不点赞、只刷浏览目标」（like_session_disabled）
         handleLikeLimitDialog();
-        // 【v2.9.6 浏览超时】每秒做一次超时退出检查：到截止时刻即退出本帖返回列表
-        this.checkBrowseTimeout?.();
+        // 【v3.2.0 操作频繁弹窗】每秒检测：操作频繁弹窗出现即自动点「确定」并暂停
+        // 所有操作 n 秒（浏览循环内等待冷却，卡死/超时检查这里一并跳过）
+        handleRateLimitDialog();
+        // 【v3.2.0 操作频繁弹窗】限流冷却中：跳过错误页跳转与浏览超时退出（不导航不操作），
+        // 只保留弹窗关闭与走秒；冷却结束补一条恢复日志（_rlPauseActive 防重复）
+        const rlRemain = this.rateLimitRemain();
+        if (rlRemain > 0) {
+          this._rlPauseActive = true;
+        } else {
+          if (this._rlPauseActive) {
+            this._rlPauseActive = false;
+            log('限流冷却到期，自动恢复浏览');
+          }
+          // 【v2.9.8 错误页识别】每秒兜底：运行中停留在 Discourse 错误页（进帖失败/列表
+          // 失败渲染了错误页）时直接回帖子列表。放在浏览超时检查前，错误页不用等超时
+          if (this.isEnabled && isDiscourseErrorPage()) {
+            escapeErrorPageAndReturn('页面加载错误');
+          }
+          // 【v2.9.6 浏览超时】每秒做一次超时退出检查：到截止时刻即退出本帖返回列表
+          this.checkBrowseTimeout?.();
+        }
       };
       tickClock();
       // 每秒刷新：面板统计区虽然 display:none，MutationObserver 仍会把变化镜像到浮窗
@@ -4420,6 +4514,9 @@
       Storage.remove('browse_returning');
       // 【v2.9.12 点赞上限】本轮结束清除「命中点赞上限」会话标记：下一轮重新正常点赞
       Storage.remove('like_session_disabled');
+      // 【v3.2.0 操作频繁弹窗】本轮结束解除限流冷却：停止即不再暂停任何操作
+      this._rateLimitUntil = 0;
+      this._rlPauseActive = false;
       sessionPinnedDay = ''; // 【v2.7.4】解除会话起始日钉住，跨天重摇恢复生效
 
       if (this.heartbeatTimer) {
