@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手 v3（人化专用）
 // @namespace    https://linux.do/
-// @version      3.2.1
+// @version      3.2.2
 // @description  自动浏览 LinuxDo 帖子：滚动阅读、随机点赞、人化反检测节奏、每日定时、分区轮换、浮窗统计。v3 为仅人化模式专用版（无手动模式/人化开关，加载即恒开启人化随机），支持定时启动、常驻开始/停止按钮
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -4619,9 +4619,11 @@
             if (nowMin <= eWin) { canRedraw = true; lo = Math.max(nowMin, sWin); hi = eWin; }
           } else {
             // 跨午夜窗口 [sWin,1440) ∪ [0,eWin]：nowMin 在凌晨段 → 凌晨还有未来时刻；
-            // nowMin 在晚间段窗口开始前 → 今晚 sWin 之后还有未来时刻
+            // nowMin 在晚间段开始前（白天）→ 今晚 sWin 之后还有未来时刻；
+            // nowMin 在晚间段进行中 → 今晚 [nowMin,1439] 还有未来时刻（v3.2.2 补）
             if (nowMin <= eWin) { canRedraw = true; lo = nowMin; hi = eWin; }
             else if (nowMin < sWin) { canRedraw = true; lo = sWin; hi = 1439; }
+            else { canRedraw = true; lo = nowMin; hi = 1439; }
           }
           if (canRedraw && lo <= hi) {
             targetMin = randomInt(lo, hi);
@@ -4630,6 +4632,20 @@
             const nmm = String(targetMin % 60).padStart(2, '0');
             schedDesc = `今日随机 ${nhh}:${nmm}（已过点补抽）`;
             log(`原定 ${bhh}:${bmm} 开跑时刻已过补跑窗口，在时段窗口内补抽为 ${nhh}:${nmm}，今日仍会自动开始`);
+          } else {
+            // 【v3.2.2】时段窗口今天已完全结束且今日尚未运行 → 立即补跑今天（0~90 秒内
+            // 开始）：用户早晨才开页面 / 设的时段已过去时不再整天不跑；同日已运行过由
+            // 上方 sched_last_run_date 守卫拦截，不会重复。targetMin 必须落盘（固定为
+            // 当前分钟），否则下方 fireOffset 检查随轮询每 30 秒漂移、fireOffset>59 秒
+            // 会永远追不上（nowSec 永远 < todayTarget*60+fireOffset）
+            targetMin = nowMin;
+            Storage.set('human_sched_base', targetMin);
+            schedDesc = `今日随机 ${bhh}:${bmm}（错过窗口，立即补跑）`;
+            // 同一分钟 / 下一轮轮询会重复进此分支，日志按天只记第一条
+            if (Storage.get('sched_immediate_log_day', '') !== todayKey) {
+              Storage.set('sched_immediate_log_day', todayKey);
+              log(`今日开跑时刻 ${bhh}:${bmm} 已过且时段窗口已结束，今日尚未运行，立即补跑`);
+            }
           }
         }
       } else {
