@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 自动浏览助手 v3（人化专用）
 // @namespace    https://linux.do/
-// @version      3.2.0
+// @version      3.2.1
 // @description  自动浏览 LinuxDo 帖子：滚动阅读、随机点赞、人化反检测节奏、每日定时、分区轮换、浮窗统计。v3 为仅人化模式专用版（无手动模式/人化开关，加载即恒开启人化随机），支持定时启动、常驻开始/停止按钮
 // @author       yyyy114514
 // @match        https://linux.do/*
@@ -4605,6 +4605,33 @@
         const bhh = String(Math.floor(base / 60)).padStart(2, '0');
         const bmm = String(base % 60).padStart(2, '0');
         schedDesc = `今日随机 ${bhh}:${bmm}`;
+        // 【v3.2.1 修复】开跑时刻已过且超出补跑窗口 → 旧逻辑整天静默跳过：页面早上才打开 /
+        // 当天才改时段时（如时段 02:00~08:00，基准抽到 05:12，页面 08:30 才开），2~8 点
+        // 窗口永远不触发。若「今天」的时段窗口还没结束（含跨午夜窗口的凌晨段），就把开跑
+        // 时刻重抽为窗口内还没到的未来时刻，今天仍能开跑；窗口已结束则留给下方补跑判断，
+        // 并补一条当日一次的日志说明（不再静默吞掉一天）
+        if (nowMin - targetMin > catchupMin) {
+          const [sWin, eWin] = humanTimeWindow();
+          let canRedraw = false;
+          let lo, hi;
+          if (sWin <= eWin) {
+            // 普通窗口 [sWin, eWin]：现在还没到窗口结束时刻 → 在 [nowMin, eWin] 内补抽
+            if (nowMin <= eWin) { canRedraw = true; lo = Math.max(nowMin, sWin); hi = eWin; }
+          } else {
+            // 跨午夜窗口 [sWin,1440) ∪ [0,eWin]：nowMin 在凌晨段 → 凌晨还有未来时刻；
+            // nowMin 在晚间段窗口开始前 → 今晚 sWin 之后还有未来时刻
+            if (nowMin <= eWin) { canRedraw = true; lo = nowMin; hi = eWin; }
+            else if (nowMin < sWin) { canRedraw = true; lo = sWin; hi = 1439; }
+          }
+          if (canRedraw && lo <= hi) {
+            targetMin = randomInt(lo, hi);
+            Storage.set('human_sched_base', targetMin);
+            const nhh = String(Math.floor(targetMin / 60)).padStart(2, '0');
+            const nmm = String(targetMin % 60).padStart(2, '0');
+            schedDesc = `今日随机 ${nhh}:${nmm}（已过点补抽）`;
+            log(`原定 ${bhh}:${bmm} 开跑时刻已过补跑窗口，在时段窗口内补抽为 ${nhh}:${nmm}，今日仍会自动开始`);
+          }
+        }
       } else {
         // 普通模式：设定时间 + 每天 0~5 分钟均匀抖动（精确到秒、每天同一瞬间启动是定时任务指纹）
         const [hh, mm] = String(scheduleTime).split(':').map(Number);
@@ -4663,7 +4690,16 @@
       if (nowMin < todayTarget) return;
 
       // 目标时刻已过去太久：视为真人「今天已来过/错过」，不补跑（修复开页即触发的 22 小时提前）
-      if (nowMin - todayTarget > catchupMin) return;
+      if (nowMin - todayTarget > catchupMin) {
+        // 【v3.2.1 提示】错过不补跑 → 补一条当日一次的说明日志：窗口已结束/开跑时刻早于
+        // 补跑窗口太久时今日不再自动开始，避免「设了时段却没跑」却没有任何日志线索。
+        // 30 秒轮询每天重复命中同一分支，用 sched_miss_log_day 只记第一条
+        if (Storage.get('sched_miss_log_day', '') !== todayKey) {
+          Storage.set('sched_miss_log_day', todayKey);
+          log(`⏰ 今日定时开跑时刻（${schedDesc}）已过且超过补跑窗口（${catchupMin} 分钟），今日不再自动开始`);
+        }
+        return;
+      }
 
       // 启动瞬间再随机 0~90 秒：每次都在整分/30 秒边界精确启动也是定时任务指纹
       const fireDay = Storage.get('sched_fire_day', '');
